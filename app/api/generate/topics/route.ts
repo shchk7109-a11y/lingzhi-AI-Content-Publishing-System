@@ -184,7 +184,12 @@ export async function POST(request: Request) {
     else platformSkill = prompts.skills_video;
 
     // Inject Ingredients and Taste Advantage into platform Skills
-    const ingredientsContext = kb.products.map(p => `${p.name}: ${p.ingredients || 'Unknown'}`).join('; ');
+    // 每个产品只取前3-4个主要原料，避免标题中出现完整原料列表
+    const ingredientsContext = kb.products.map(p => {
+      const allIngredients = (p.ingredients || 'Unknown').split(/[\s、，,]+/).filter((i: string) => i.trim().length > 0);
+      const mainIngredients = allIngredients.slice(0, 3).join('、');
+      return `${p.name}: ${mainIngredients}${allIngredients.length > 3 ? '等' : ''}`;
+    }).join('; ');
     platformSkill = platformSkill
       .replace(/\{\{ingredients\}\}/g, ingredientsContext)
       .replace(/\{\{taste_advantage\}\}/g, tasteAdvantageContext);

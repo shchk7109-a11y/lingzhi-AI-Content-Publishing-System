@@ -13,6 +13,11 @@ export interface TopicGroup {
   growth: string[]
   knowledge: string[]
   authority: string[]
+  // 小红书专用分类
+  experience?: string[]
+  scenario?: string[]
+  faq?: string[]
+  contrast?: string[]
 }
 
 interface Step3TopicsProps {
@@ -33,6 +38,14 @@ const STRATEGY_CONFIG = [
   { key: "growth" as const, icon: "🚀", label: "增长", color: "#3B4FA8", bg: "#EBF0FF" },
   { key: "knowledge" as const, icon: "📚", label: "知识", color: "#2D5A27", bg: "#EBF5E9" },
   { key: "authority" as const, icon: "👑", label: "权威", color: "#B85C00", bg: "#FFF8E7" },
+]
+
+// 小红书专用四类选题配置
+const XHS_STRATEGY_CONFIG = [
+  { key: "experience" as const, icon: "💫", label: "客户体验", color: "#C2185B", bg: "#FCE4EC" },
+  { key: "scenario" as const, icon: "🌿", label: "场景推荐", color: "#2D5A27", bg: "#EBF5E9" },
+  { key: "faq" as const, icon: "💡", label: "疑问解答", color: "#E8820A", bg: "#FFF8E7" },
+  { key: "contrast" as const, icon: "🔥", label: "认知反差", color: "#3B4FA8", bg: "#EBF0FF" },
 ]
 
 const PILLAR_COLORS = ["#2D5A27", "#E8820A", "#3B4FA8"]
@@ -67,12 +80,22 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
       }
       const data = await response.json()
       if (data.topics) {
-        const topicGroups: TopicGroup[] = Object.keys(data.topics).map((pillarName) => ({
-          pillar: pillarName,
-          growth: data.topics[pillarName].growth || [],
-          knowledge: data.topics[pillarName].knowledge || [],
-          authority: data.topics[pillarName].authority || [],
-        }))
+        const topicGroups: TopicGroup[] = Object.keys(data.topics).map((pillarName) => {
+          const t = data.topics[pillarName]
+          // 小红书专用格式：experience/scenario/faq/contrast
+          // 通用格式：growth/knowledge/authority
+          const isXhsFormat = t.experience !== undefined || t.scenario !== undefined
+          return {
+            pillar: pillarName,
+            growth: isXhsFormat ? [] : (t.growth || []),
+            knowledge: isXhsFormat ? [] : (t.knowledge || []),
+            authority: isXhsFormat ? [] : (t.authority || []),
+            experience: t.experience || [],
+            scenario: t.scenario || [],
+            faq: t.faq || [],
+            contrast: t.contrast || [],
+          }
+        })
         setTopicsMap((prev) => ({ ...prev, [platform]: topicGroups }))
         toast.success(`${PLATFORMS.find((p) => p.key === platform)?.label}选题生成成功！`)
       } else {
@@ -120,11 +143,19 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
     setSelectedTopics(newSelected)
   }
 
+  const getGroupAllTopics = (g: TopicGroup): string[] => {
+    const isXhs = (g.experience?.length ?? 0) > 0 || (g.scenario?.length ?? 0) > 0
+    if (isXhs) {
+      return [...(g.experience || []), ...(g.scenario || []), ...(g.faq || []), ...(g.contrast || [])]
+    }
+    return [...g.growth, ...g.knowledge, ...g.authority]
+  }
+
   const toggleAll = () => {
     const topics = topicsMap[currentPlatform]
     if (topics.length === 0) return
     const allTopics: string[] = []
-    topics.forEach((g) => allTopics.push(...g.growth, ...g.knowledge, ...g.authority))
+    topics.forEach((g) => allTopics.push(...getGroupAllTopics(g)))
     const allSelected = allTopics.every((t) => selectedTopics.has(t))
     const newSelected = new Set(selectedTopics)
     allTopics.forEach((t) => (allSelected ? newSelected.delete(t) : newSelected.add(t)))
@@ -332,10 +363,7 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
                       {group.pillar}
                     </span>
                     <button
-                      onClick={() => {
-                        const allTopics = [...group.growth, ...group.knowledge, ...group.authority]
-                        toggleGroup(allTopics)
-                      }}
+                      onClick={() => toggleGroup(getGroupAllTopics(group))}
                       className="ml-auto text-xs px-2.5 py-1 rounded-lg"
                       style={{
                         background: "rgba(45,90,39,0.08)",
@@ -346,55 +374,65 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
                     </button>
                   </div>
 
-                  {/* 三列选题 */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100">
-                    {STRATEGY_CONFIG.map((strategy) => (
-                      <div key={strategy.key} className="p-4 space-y-2">
-                        <div className="flex items-center justify-between mb-2">
-                          <div
-                            className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
-                            style={{ background: strategy.bg, color: strategy.color }}
-                          >
-                            <span>{strategy.icon}</span>
-                            {strategy.label}
-                          </div>
-                          <button
-                            onClick={() => toggleGroup(group[strategy.key])}
-                            className="text-xs"
-                            style={{ color: "rgba(45,90,39,0.5)" }}
-                          >
-                            {group[strategy.key].every((t) => selectedTopics.has(t)) ? "取消" : "全选"}
-                          </button>
-                        </div>
-                        {group[strategy.key].map((topic, topicIndex) => (
-                          <div
-                            key={topicIndex}
-                            className="flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-all"
-                            style={{
-                              background: selectedTopics.has(topic) ? strategy.bg : "transparent",
-                              border: selectedTopics.has(topic)
-                                ? `1px solid ${strategy.color}30`
-                                : "1px solid transparent",
-                            }}
-                            onClick={() => toggleTopic(topic)}
-                          >
-                            <Checkbox
-                              checked={selectedTopics.has(topic)}
-                              onCheckedChange={() => toggleTopic(topic)}
-                              className="mt-0.5 flex-shrink-0"
-                              style={{ accentColor: strategy.color }}
-                            />
-                            <Label
-                              className="cursor-pointer text-sm leading-relaxed"
-                              style={{ color: selectedTopics.has(topic) ? strategy.color : "#3D2B1F" }}
-                            >
-                              {topic}
-                            </Label>
-                          </div>
-                        ))}
+                  {/* 选题列表：小红书用四列，其他平台用三列 */}
+                  {(() => {
+                    const isXhs = (group.experience?.length ?? 0) > 0 || (group.scenario?.length ?? 0) > 0
+                    const config = isXhs ? XHS_STRATEGY_CONFIG : STRATEGY_CONFIG
+                    const colClass = isXhs ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-gray-100" : "grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100"
+                    return (
+                      <div className={colClass}>
+                        {config.map((strategy) => {
+                          const topics: string[] = (group as any)[strategy.key] || []
+                          return (
+                            <div key={strategy.key} className="p-4 space-y-2">
+                              <div className="flex items-center justify-between mb-2">
+                                <div
+                                  className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
+                                  style={{ background: strategy.bg, color: strategy.color }}
+                                >
+                                  <span>{strategy.icon}</span>
+                                  {strategy.label}
+                                </div>
+                                <button
+                                  onClick={() => toggleGroup(topics)}
+                                  className="text-xs"
+                                  style={{ color: "rgba(45,90,39,0.5)" }}
+                                >
+                                  {topics.length > 0 && topics.every((t) => selectedTopics.has(t)) ? "取消" : "全选"}
+                                </button>
+                              </div>
+                              {topics.map((topic, topicIndex) => (
+                                <div
+                                  key={topicIndex}
+                                  className="flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-all"
+                                  style={{
+                                    background: selectedTopics.has(topic) ? strategy.bg : "transparent",
+                                    border: selectedTopics.has(topic)
+                                      ? `1px solid ${strategy.color}30`
+                                      : "1px solid transparent",
+                                  }}
+                                  onClick={() => toggleTopic(topic)}
+                                >
+                                  <Checkbox
+                                    checked={selectedTopics.has(topic)}
+                                    onCheckedChange={() => toggleTopic(topic)}
+                                    className="mt-0.5 flex-shrink-0"
+                                    style={{ accentColor: strategy.color }}
+                                  />
+                                  <Label
+                                    className="cursor-pointer text-sm leading-relaxed"
+                                    style={{ color: selectedTopics.has(topic) ? strategy.color : "#3D2B1F" }}
+                                  >
+                                    {topic}
+                                  </Label>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        })}
                       </div>
-                    ))}
-                  </div>
+                    )
+                  })()}
                 </div>
               ))}
             </div>
