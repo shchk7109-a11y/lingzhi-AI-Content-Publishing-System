@@ -200,6 +200,20 @@ export async function POST(request: Request) {
         .replace('{{quantity_instruction}}', quantityInstruction)
         .replace('{{taste_advantage}}', tasteAdvantageContext);
 
+    // 追加 personas 上下文（通用流程，所有平台受益）
+    const personasForTopics = buildPersonasAndAnglesContext(kb);
+    systemPrompt = systemPrompt +
+      '\n\n**【用户画像与痛点素材库（生成选题时必须参考）】**\n' +
+      personasForTopics;
+
+    // 短视频选题可以包含创始人相关方向
+    if (platform === 'video') {
+      systemPrompt = systemPrompt +
+        '\n\n**【创始人故事素材（短视频专用选题方向）】**\n' +
+        `创始人${kb.founder.name}：25年液态灵芝专家，曾实现1亿元品牌退出。\n` +
+        '可围绕创始人经历生成权威背书类选题，如："25年只做一件事的人，做出了什么样的饮品"';
+    }
+
     // Build User Prompt
     let userPrompt = prompts.topics_user
         .replace('{{platform}}', platform)
