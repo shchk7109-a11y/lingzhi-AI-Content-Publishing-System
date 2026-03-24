@@ -82,6 +82,84 @@ const CONTENT_ANGLES = [
   },
 ];
 
+interface QualityCheckResult {
+  passed: boolean;
+  issues: string[];
+}
+
+function checkContentQuality(result: any, platform: string): QualityCheckResult {
+  const issues: string[] = [];
+
+  // 通用：检查冲泡场景（所有平台）
+  const allText = JSON.stringify(result);
+  const wrongScenePatterns = ['冲泡', '热水一冲', '泡了杯', '自己泡', '冲一杯', '泡上这杯', '办公室冲'];
+  for (const pattern of wrongScenePatterns) {
+    if (allText.includes(pattern)) {
+      issues.push(`包含错误的冲泡场景「${pattern}」（灵芝水铺是门店现制，不是冲泡包）`);
+    }
+  }
+
+  if (platform === 'xiaohongshu') {
+    const content = result.content || '';
+    const chineseChars = content.match(/[\u4e00-\u9fff]/g) || [];
+    const contentLen = chineseChars.length;
+
+    if (contentLen < 200) issues.push(`正文过短（${contentLen}字，要求≥200字）`);
+    if (contentLen > 500) issues.push(`正文过长（${contentLen}字，要求≤500字）`);
+    if (!content.includes('药食同源') && !content.includes('不能代替药物')) {
+      issues.push('缺少合规声明');
+    }
+
+    const tags = result.tags || [];
+    if (tags.length < 4) issues.push(`标签不足（${tags.length}个，要求≥5个）`);
+    if (!tags.some((t: string) => t.includes('灵芝水铺'))) {
+      issues.push('标签缺少 #灵芝水铺');
+    }
+
+    const aiPatterns = ['宝子们', '家人们', '姐妹们看过来', '集美们', '赶紧冲', '闭眼入', '不买后悔'];
+    for (const p of aiPatterns) {
+      if (content.includes(p)) issues.push(`包含AI味词汇「${p}」`);
+    }
+
+    const brandIndex = content.indexOf('灵芝水铺');
+    if (brandIndex !== -1 && brandIndex < content.length * 0.3) {
+      issues.push('品牌名出现在正文前1/3');
+    }
+
+  } else if (platform === 'wechat') {
+    const content = result.content || '';
+    const chineseChars = content.match(/[\u4e00-\u9fff]/g) || [];
+    const contentLen = chineseChars.length;
+
+    if (contentLen > 100) issues.push(`正文过长（${contentLen}字，朋友圈要求≤80字）`);
+    if (!content.includes('药食同源') && !content.includes('不能代替药物')) {
+      issues.push('缺少合规声明');
+    }
+    if (!content.includes('配图')) {
+      issues.push('缺少配图建议');
+    }
+
+  } else if (platform === 'video') {
+    if (!result.hook) issues.push('缺少黄金3秒钩子');
+    if (!result.scenes || result.scenes.length < 2) {
+      issues.push('分镜不足（要求≥3个场景）');
+    }
+    if (result.scenes) {
+      for (let i = 0; i < result.scenes.length; i++) {
+        const scene = result.scenes[i];
+        if (!scene.visual || scene.visual.length < 10) {
+          issues.push(`场景${i+1}画面描述过于简略`);
+        }
+      }
+    }
+    if (allText.includes('创始人孙勇') || allText.includes('我研究了25年')) {
+      issues.push('包含创始人出镜内容');
+    }
+  }
+
+  return { passed: issues.length === 0, issues };
+}
+
 function getMatchingExample(
   kb: ReturnType<typeof getKnowledgeBase>,
   platform: string,
@@ -254,7 +332,49 @@ export async function POST(request: Request) {
       if (!content) throw new Error("No content received from AI");
 
       const result = JSON.parse(cleanJsonResponse(content));
-      return NextResponse.json({ ...result, angle_id: angle.id, angle_label: angle.label });
+
+      const qualityCheck = checkContentQuality(result, platform);
+      if (!qualityCheck.passed) {
+        console.log('[Quality Check] Issues:', qualityCheck.issues);
+
+        try {
+          const retryUserPrompt = userPrompt +
+            '\n\n⚠️ 上一次生成存在以下问题，请务必修正：\n' +
+            qualityCheck.issues.map((issue, i) => `${i+1}. ${issue}`).join('\n') +
+            '\n请严格修正后重新输出。';
+
+          const retryParams = { ...completionParams };
+          retryParams.messages = [
+            retryParams.messages[0],
+            { role: 'user', content: retryUserPrompt },
+          ];
+
+          const retryCompletion = await openai.chat.completions.create(retryParams);
+          const retryContent = retryCompletion.choices[0].message.content;
+          if (retryContent) {
+            const retryResult = JSON.parse(cleanJsonResponse(retryContent));
+            const retryCheck = checkContentQuality(retryResult, platform);
+
+            if (retryCheck.passed || retryCheck.issues.length < qualityCheck.issues.length) {
+              return NextResponse.json({
+                ...retryResult,
+                angle_id: angle.id,
+                angle_label: angle.label,
+                _quality: { passed: retryCheck.passed, issues: retryCheck.issues, retried: true }
+              });
+            }
+          }
+        } catch (retryErr) {
+          console.error('[Quality Check] Retry failed:', retryErr);
+        }
+      }
+
+      return NextResponse.json({
+        ...result,
+        angle_id: angle.id,
+        angle_label: angle.label,
+        _quality: { passed: qualityCheck.passed, issues: qualityCheck.issues, retried: false }
+      });
     }
 
     // 7. 生成全部5篇（并发）
@@ -304,7 +424,8 @@ export async function POST(request: Request) {
         if (!content) throw new Error("No content received from AI");
 
         const parsed = JSON.parse(cleanJsonResponse(content));
-        return { ...parsed, angle_id: angle.id, angle_label: angle.label };
+        const qc = checkContentQuality(parsed, platform);
+        return { ...parsed, angle_id: angle.id, angle_label: angle.label, _quality: { passed: qc.passed, issues: qc.issues } };
       })
     );
 
