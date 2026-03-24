@@ -3,7 +3,7 @@
 import * as React from "react"
 import { Step1Pillars, PillarItem } from "@/components/pipeline/step-1-pillars"
 import { Step2Matrix, MatrixRow } from "@/components/pipeline/step-2-matrix"
-import { Step3Topics } from "@/components/pipeline/step-3-topics"
+import { Step3Topics, TopicWithContext } from "@/components/pipeline/step-3-topics"
 import { Step4Scripts } from "@/components/pipeline/step-4-scripts"
 import { useAuth } from "@/components/auth-provider"
 import { Leaf, Sparkles, Grid3X3, FileText, BookOpen } from "lucide-react"
@@ -24,7 +24,7 @@ export default function Home() {
   const [pillarMode, setPillarMode] = React.useState<string>('brand')
   const [pillarProductId, setPillarProductId] = React.useState<string>('')
   const [matrix, setMatrix] = React.useState<MatrixRow[]>([])
-  const [topics, setTopics] = React.useState<string[]>([])
+  const [topics, setTopics] = React.useState<TopicWithContext[]>([])
   const [selectedPlatform, setSelectedPlatform] = React.useState<Platform>("video")
 
   const handlePillarsConfirmed = (newPillars: PillarItem[], mode?: string, productId?: string) => {
@@ -37,7 +37,7 @@ export default function Home() {
     setMatrix(newMatrix)
     setCurrentStep(3)
   }
-  const handleTopicsConfirmed = (selectedTopics: string[], platform: Platform) => {
+  const handleTopicsConfirmed = (selectedTopics: TopicWithContext[], platform: Platform) => {
     setTopics(selectedTopics)
     setSelectedPlatform(platform)
     setCurrentStep(4)

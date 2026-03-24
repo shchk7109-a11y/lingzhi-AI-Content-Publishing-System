@@ -20,9 +20,16 @@ export interface TopicGroup {
   contrast?: string[]
 }
 
+export interface TopicWithContext {
+  topic: string
+  pillar_name: string
+  content_type: string
+  strategy_explanation: string
+}
+
 interface Step3TopicsProps {
   matrix: MatrixRow[]
-  onConfirm: (selectedTopics: string[], platform: Platform) => void
+  onConfirm: (selectedTopics: TopicWithContext[], platform: Platform) => void
   onBack: () => void
 }
 
@@ -64,6 +71,7 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
     video: false,
   })
   const [error, setError] = React.useState<string | null>(null)
+  const [topicContextMap, setTopicContextMap] = React.useState<Map<string, {pillar_name: string, content_type: string, strategy_explanation: string}>>(new Map())
 
   const handleGenerate = async (platform: Platform) => {
     setLoadingMap((prev) => ({ ...prev, [platform]: true }))
@@ -97,6 +105,24 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
           }
         })
         setTopicsMap((prev) => ({ ...prev, [platform]: topicGroups }))
+        // 构建 topic 上下文映射
+        const newContextMap = new Map(topicContextMap);
+        const strategyKeys = platform === 'xiaohongshu'
+          ? ['experience', 'scenario', 'faq', 'contrast']
+          : ['growth', 'knowledge', 'authority'];
+        topicGroups.forEach(group => {
+          strategyKeys.forEach(key => {
+            const topicsList = (group as any)[key] || [];
+            topicsList.forEach((t: string) => {
+              newContextMap.set(t, {
+                pillar_name: group.pillar,
+                content_type: key,
+                strategy_explanation: '',
+              });
+            });
+          });
+        });
+        setTopicContextMap(newContextMap);
         toast.success(`${PLATFORMS.find((p) => p.key === platform)?.label}选题生成成功！`)
       } else {
         throw new Error("AI 返回格式异常，请重试")
@@ -163,7 +189,18 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
   }
 
   const handleConfirm = () => {
-    if (selectedTopics.size > 0) onConfirm(Array.from(selectedTopics), currentPlatform)
+    if (selectedTopics.size > 0) {
+      const topicsWithContext: TopicWithContext[] = Array.from(selectedTopics).map(topic => {
+        const ctx = topicContextMap.get(topic);
+        return {
+          topic,
+          pillar_name: ctx?.pillar_name || '',
+          content_type: ctx?.content_type || '',
+          strategy_explanation: ctx?.strategy_explanation || '',
+        };
+      });
+      onConfirm(topicsWithContext, currentPlatform);
+    }
   }
 
   const currentTopics = topicsMap[currentPlatform]
