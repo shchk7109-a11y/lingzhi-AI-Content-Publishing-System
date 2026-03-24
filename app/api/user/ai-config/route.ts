@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import * as jwt from 'jsonwebtoken';
 import { getUserAIConfigs, upsertProviderConfig } from '@/lib/ai-config-db';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'lingzhi-secret-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'lingzhi-dev-secret-change-in-production';
 
 async function getCurrentUserId(): Promise<string | null> {
   try {
