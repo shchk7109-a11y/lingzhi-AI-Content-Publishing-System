@@ -58,7 +58,11 @@ export function getProvider(req: Request): string {
  * Remove trailing commas before } or ] — a common quirk in Kimi/Moonshot output.
  */
 function fixTrailingCommas(json: string): string {
-  return json.replace(/,\s*([}\]])/g, '$1');
+  let fixed = json.replace(/,\s*([}\]])/g, '$1');
+  // Fix malformed hashtag strings: #"tag" → "#tag"
+  // e.g. #"祛湿茶" → "#祛湿茶"
+  fixed = fixed.replace(/#"([^"]+)"/g, '"#$1"');
+  return fixed;
 }
 
 /**
