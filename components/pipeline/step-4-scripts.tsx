@@ -20,6 +20,7 @@ import Link from "next/link"
 import { toast } from "sonner"
 import { fetchWithAIConfig } from "@/lib/ai-client-frontend"
 import { saveContentAsset, markAssetsDownloaded, PLATFORM_LABELS } from "@/lib/content-assets"
+import { TopicWithContext } from './step-3-topics'
 
 // ─── 类型定义 ───────────────────────────────────────────────────────────────
 
@@ -46,7 +47,7 @@ interface GeneratedContent {
 type Platform = "xiaohongshu" | "wechat" | "video"
 
 interface Step4ScriptsProps {
-  topics: string[]
+  topics: TopicWithContext[]
   platform: Platform
   onBack: () => void
   onRestart?: () => void
@@ -211,20 +212,29 @@ async function runWithConcurrencyLimit<T>(
 // ─── 主组件 ──────────────────────────────────────────────────────────────────
 
 export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4ScriptsProps) {
+  // 从 TopicWithContext[] 中提取纯标题字符串列表（兼容现有逻辑）
+  const topicStrings = topics.map(t => t.topic);
+  // 根据标题字符串查找完整上下文
+  const getTopicContext = (topicStr: string): TopicWithContext => {
+    return topics.find(t => t.topic === topicStr) || {
+      topic: topicStr, pillar_name: '', content_type: '', strategy_explanation: ''
+    };
+  };
+
   // items: key = `${topic}__${angle_id}`
   const [items, setItems] = React.useState<Record<string, GeneratedContent>>({})
-  const [activeTopic, setActiveTopic] = React.useState<string>(topics[0] || "")
+  const [activeTopic, setActiveTopic] = React.useState<string>(topicStrings[0] || "")
   // 每个 topic 当前选中的角度
   const [selectedAngles, setSelectedAngles] = React.useState<Record<string, string>>({})
   const [isGeneratingAll, setIsGeneratingAll] = React.useState(false)
   const [copiedKey, setCopiedKey] = React.useState<string | null>(null)
 
   React.useEffect(() => {
-    if (!activeTopic && topics.length > 0) setActiveTopic(topics[0])
+    if (!activeTopic && topicStrings.length > 0) setActiveTopic(topicStrings[0])
     // 智能推荐角度：根据选题内容自动分配，均匀分布，人工可修改
     setSelectedAngles((prev) => {
       // 找出尚未分配角度的选题
-      const newTopics = topics.filter((t) => !prev[t])
+      const newTopics = topicStrings.filter((t) => !prev[t])
       if (newTopics.length === 0) return prev
       const smartAssigned = assignAngles(newTopics)
       return { ...prev, ...smartAssigned }
@@ -249,7 +259,17 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
       const response = await fetchWithAIConfig("/api/generate/scripts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic, platform, angle_id }),
+        body: (() => {
+          const topicCtx = getTopicContext(topic);
+          return JSON.stringify({
+            topic,
+            platform,
+            angle_id,
+            pillar_name: topicCtx.pillar_name,
+            content_type: topicCtx.content_type,
+            strategy_explanation: topicCtx.strategy_explanation,
+          });
+        })(),
       })
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}))
@@ -290,7 +310,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
 
   const handleGenerateAll = async () => {
     setIsGeneratingAll(true)
-    const topicsToGenerate = topics.filter((t) => {
+    const topicsToGenerate = topicStrings.filter((t) => {
       const angleId = selectedAngles[t] || CONTENT_ANGLES[0].id
       const key = `${t}__${angleId}`
       return items[key]?.status !== "completed"
@@ -368,7 +388,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
       const XLSX = await import("xlsx")
       const rows: any[] = []
       let rowNum = 1
-      topics.forEach((t) => {
+      topicStrings.forEach((t) => {
         CONTENT_ANGLES.forEach((angle) => {
           const key = `${t}__${angle.id}`
           const item = items[key]
@@ -413,7 +433,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
 
   // ── 统计 ──────────────────────────────────────────────────────────────────
 
-  const completedCount = topics.filter((t) => {
+  const completedCount = topicStrings.filter((t) => {
     const angleId = selectedAngles[t] || CONTENT_ANGLES[0].id
     return items[`${t}__${angleId}`]?.status === "completed"
   }).length
@@ -447,7 +467,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
               步骤四：{PLATFORM_LABELS[platform]}生成
             </h2>
             <p className="text-green-200/70 text-xs">
-              已完成 {completedCount} / {topics.length} 条（按当前选中角度统计）
+              已完成 {completedCount} / {topicStrings.length} 条（按当前选中角度统计）
             </p>
           </div>
         </div>
@@ -460,13 +480,13 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
             <div
               className="h-full rounded-full transition-all duration-500"
               style={{
-                width: `${topics.length > 0 ? (completedCount / topics.length) * 100 : 0}%`,
+                width: `${topicStrings.length > 0 ? (completedCount / topicStrings.length) * 100 : 0}%`,
                 background: "linear-gradient(90deg, #A8D5A2, #E8820A)",
               }}
             />
           </div>
           <span className="text-white/80 text-sm font-bold">
-            {topics.length > 0 ? Math.round((completedCount / topics.length) * 100) : 0}%
+            {topicStrings.length > 0 ? Math.round((completedCount / topicStrings.length) * 100) : 0}%
           </span>
           {/* 资产库快捷入口 */}
           <Link
@@ -535,7 +555,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
 
           {/* 选题列表 */}
           <div className="overflow-y-auto" style={{ maxHeight: "520px" }}>
-            {topics.map((topic, idx) => {
+            {topicStrings.map((topic, idx) => {
               const angleId = selectedAngles[topic] || CONTENT_ANGLES[0].id
               const key = `${topic}__${angleId}`
               const item = items[key]
