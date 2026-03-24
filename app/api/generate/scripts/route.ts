@@ -86,6 +86,9 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { topic, platform = 'video', angle_id } = body;
+    const pillar_name = body.pillar_name || '';
+    const content_type = body.content_type || '';
+    const strategy_explanation = body.strategy_explanation || '';
 
     if (!topic || typeof topic !== 'string') {
       return NextResponse.json(
@@ -126,6 +129,29 @@ export async function POST(request: Request) {
     // 3. 构建口感优势上下文
     const tasteAdvantageContext = buildTasteAdvantageContext(kb);
 
+    // 构建 marketing_angles 上下文
+    const fullMarketingAnglesContext = relevantProducts.map(p =>
+      p.personas.map(per =>
+        `${per.role}：${per.marketing_angles.join('；')}`
+      ).join('\n')
+    ).join('\n');
+
+    // 口感关键词简写
+    const tasteKeywords = (() => {
+      const phrases: string[] = [];
+      const ta = kb.brand.taste_advantage;
+      if (ta?.vs_milk_tea?.summary) phrases.push(ta.vs_milk_tea.summary);
+      if (ta?.vs_traditional_herbal?.summary) phrases.push(ta.vs_traditional_herbal.summary);
+      if (ta?.core_positioning) phrases.push(ta.core_positioning);
+      return phrases.join('；') || '无苦涩，有回甘';
+    })();
+
+    // 品牌技术背景：仅短视频平台注入，小红书和朋友圈不注入
+    // 注意：不注入创始人个人信息，只提供品牌技术背书素材（用于旁白/字幕，创始人不出镜）
+    const founderContext = platform === 'video'
+      ? `品牌技术背景：25年液态灵芝发酵技术积累，去除苦涩味保留功效成分。\n技术亮点：液态发酵使分子量更小更易吸收，发酵自然带来回甘无需添加糖。\n信任背书：已有成功的产业化经验（前品牌年销百万瓶）。\n注意：以上信息仅用于旁白/字幕背书，创始人不出镜。`
+      : '（当前平台不使用创始人信息）';
+
     // 4. 确定内容角度
     // 如果传入了 angle_id，使用指定角度；否则生成全部5篇
     const targetAngles = angle_id
@@ -163,16 +189,26 @@ export async function POST(request: Request) {
         .replace(/\{\{brand_name\}\}/g, kb.brand.name)
         .replace(/\{\{ingredients\}\}/g, allIngredients)
         .replace(/\{\{pain_points\}\}/g, fullPersonaContext)
-        .replace(/\{\{marketing_angles\}\}/g, '')
+        .replace(/\{\{marketing_angles\}\}/g, fullMarketingAnglesContext)
         .replace(/\{\{platform\}\}/g, platform)
         .replace(/\{\{taste_advantage\}\}/g, tasteAdvantageContext)
+        .replace(/\{\{pillar_name\}\}/g, pillar_name)
+        .replace(/\{\{content_type\}\}/g, content_type)
+        .replace(/\{\{strategy_explanation\}\}/g, strategy_explanation)
+        .replace(/\{\{topic\}\}/g, topic)
+        .replace(/\{\{founder_context\}\}/g, founderContext)
+        .replace(/\{\{taste_keywords\}\}/g, tasteKeywords)
         + `\n\n**当前内容角度：${angle.label}**\n${angle.desc}`;
 
       const finalSystemPrompt = needsPromptJson
         ? systemPrompt + '\n\n**IMPORTANT: You MUST respond with valid JSON only. No markdown, no extra text. Output the raw JSON object directly.**'
         : systemPrompt;
 
-      const userPrompt = prompts.scripts_user.replace('{{topic}}', topic);
+      const userPrompt = prompts.scripts_user
+        .replace(/\{\{topic\}\}/g, topic)
+        .replace(/\{\{pillar_name\}\}/g, pillar_name)
+        .replace(/\{\{content_type\}\}/g, content_type)
+        .replace(/\{\{strategy_explanation\}\}/g, strategy_explanation);
 
       const completionParams: any = {
         model: modelName,
@@ -198,16 +234,26 @@ export async function POST(request: Request) {
           .replace(/\{\{brand_name\}\}/g, kb.brand.name)
           .replace(/\{\{ingredients\}\}/g, allIngredients)
           .replace(/\{\{pain_points\}\}/g, fullPersonaContext)
-          .replace(/\{\{marketing_angles\}\}/g, '')
+          .replace(/\{\{marketing_angles\}\}/g, fullMarketingAnglesContext)
           .replace(/\{\{platform\}\}/g, platform)
           .replace(/\{\{taste_advantage\}\}/g, tasteAdvantageContext)
+          .replace(/\{\{pillar_name\}\}/g, pillar_name)
+          .replace(/\{\{content_type\}\}/g, content_type)
+          .replace(/\{\{strategy_explanation\}\}/g, strategy_explanation)
+          .replace(/\{\{topic\}\}/g, topic)
+          .replace(/\{\{founder_context\}\}/g, founderContext)
+          .replace(/\{\{taste_keywords\}\}/g, tasteKeywords)
           + `\n\n**当前内容角度：${angle.label}**\n${angle.desc}`;
 
         const finalSystemPrompt = needsPromptJson
           ? systemPrompt + '\n\n**IMPORTANT: You MUST respond with valid JSON only. No markdown, no extra text. Output the raw JSON object directly.**'
           : systemPrompt;
 
-        const userPrompt = prompts.scripts_user.replace('{{topic}}', topic);
+        const userPrompt = prompts.scripts_user
+          .replace(/\{\{topic\}\}/g, topic)
+          .replace(/\{\{pillar_name\}\}/g, pillar_name)
+          .replace(/\{\{content_type\}\}/g, content_type)
+          .replace(/\{\{strategy_explanation\}\}/g, strategy_explanation);
 
         const completionParams: any = {
           model: modelName,

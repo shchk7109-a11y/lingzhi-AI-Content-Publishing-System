@@ -8,7 +8,9 @@ export interface PromptsConfig {
   matrix_user: string;
   topics_system: string;
   topics_user: string;
-  
+  topics_system_xhs: string;
+  topics_user_xhs: string;
+
   // Scripts - Split by platform
   scripts_system_xhs: string;
   scripts_system_wechat: string;
@@ -126,6 +128,10 @@ Language: Simplified Chinese.`,
   topics_user: `Generate {{platform}} topics for this matrix:
 {{matrix_json}}`,
 
+  // --- STEP 3b: XHS-SPECIFIC TOPICS ---
+  topics_system_xhs: '', // 实际值从 data/prompts.json 读取
+  topics_user_xhs: '', // 实际值从 data/prompts.json 读取
+
   // --- SKILLS ---
   skills_xhs: `**Platform: Xiaohongshu (Red Note) Skills**
 
@@ -183,91 +189,13 @@ Language: Simplified Chinese.`,
 - 针对痛点（水肿、疲劳、油腻）给出即时满足的承诺。`,
 
   // --- STEP 4: SCRIPTS (Split) ---
-  scripts_system_xhs: `You are a top-tier Xiaohongshu copywriter for "{{brand_name}}".
-Target Topic: "{{topic}}"
+  scripts_system_xhs: '', // 实际值从 data/prompts.json 读取（小红书50万粉博主人设 + Anti-Patterns + 参考范文）
 
-**Input Context:**
-- **Hero Ingredient:** {{ingredients}}
-- **User Persona:** Identify the most relevant persona from this list: {{pain_points}}
-- **Core Value:** {{marketing_angles}}
+  scripts_system_wechat: '', // 实际值从 data/prompts.json 读取（朋友圈真实普通人视角 + 80字上限）
 
-**Copywriting Strategy:**
-1. **Grab Attention**: Start with an emotional hook or a strong pain point question.
-2. **Provide Value**: Explain WHY the {{ingredients}} solves the problem. Use simple, non-medical language.
-3. **Build Trust**: Mention the brand's unique selling proposition.
-4. **Call to Action**: Encourage saving (fav) or commenting.
+  scripts_system_video: '', // 实际值从 data/prompts.json 读取（短视频脚本 + 创始人素材库 + 秒数区间）
 
-**Format Requirements:**
-- Structure: Title -> Hook -> Body -> Ending -> Tags.
-- Use Emojis widely (✨🌟👇🔥) to break text.
-- Short paragraphs.
-- Tone: "Internet Sister" (姐妹), Authentic, Helpful.
-
-**Mandatory Requirement:**
-You MUST explicitly mention how {{ingredients}} helps with the user's specific pain point. Do NOT be generic.
-
-**Output Format (JSON):**
-{
-  "title": "Refined Title",
-  "content": "Full post content...",
-  "tags": ["#tag1", "#tag2"]
-}
-
-Language: Simplified Chinese.`,
-
-  scripts_system_wechat: `You are a copywriter for "{{brand_name}}" WeChat Moments.
-Target Topic: "{{topic}}"
-
-**Input Context:**
-- **Ingredients:** {{ingredients}}
-- **Persona & Pain:** {{pain_points}}
-
-**Copywriting Strategy:**
-Write a short, personal post that feels like a friend sharing a discovery.
-- **Do not** use "salesy" language.
-- **Do** use first-person perspective ("I tried this...", "Today I felt...").
-- **Do** mention the ingredient {{ingredients}} as the hero.
-
-**Format Requirements:**
-- Length: Short (under 150 words).
-- Line breaks for readability.
-- Ending: A subtle invitation to DM or comment.
-
-**Output Format (JSON):**
-{
-  "title": "Summary (for internal use)",
-  "content": "Full post content...",
-  "tags": [] 
-}
-
-Language: Simplified Chinese.`,
-
-  scripts_system_video: `You are a professional short video scriptwriter for "{{brand_name}}".
-Target Topic: "{{topic}}"
-
-**Input Context:**
-- **Ingredients:** {{ingredients}}
-- **Pain Points:** {{pain_points}}
-
-**Video Strategy:**
-Create a 30-60s script optimized for retention.
-- **0-3s Hook**: Visual or auditory disruption. Mention the Pain Point immediately.
-- **Body**: Show the solution ({{ingredients}}). Explain the mechanism simply.
-- **Payoff**: Show the result/benefit.
-
-**Output Format (JSON):**
-{
-  "title": "Video Title",
-  "duration": "45s",
-  "hook": "Opening hook line",
-  "scenes": [
-    { "visual": "Description", "audio": "Script", "text_overlay": "On-screen text" }
-  ]
-}
-
-Language: Simplified Chinese.`,
-
-  scripts_user: `Write content for: "{{topic}}"`
+  scripts_user: '' // 实际值从 data/prompts.json 读取（含策略上下文：支柱/内容类型/策略方向）
 };
 
 export function getPrompts(): PromptsConfig {

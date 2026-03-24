@@ -110,6 +110,27 @@ ${kb.products.map(p => `- ${p.name}：${p.function}`).join('\n')}${tasteContext}
       .replace('{{category}}', categoryDesc);
 
     // ==========================================
+    // 3.5 注入创意种子，避免每次生成相同的支柱
+    // ==========================================
+    const creativitySeeds = [
+      '本次请特别从「年轾Z世代」视角出发，支柱要体现潮流感和社交属性。',
+      '本次请特别从「职场效率」视角出发，支柱要体现时间价值和便捷性。',
+      '本次请特别从「口感革命」视角出发，支柱要体现味觉体验和传统突破。',
+      '本次请特别从「女性自我关怀」视角出发，支柱要体现情绪价值和仪式感。',
+      '本次请特别从「科技养生」视角出发，支柱要体现现代技术和传统智慧的融合。',
+      '本次请特别从「社交货币」视角出发，支柱要体现分享欲和话题性。',
+      '本次请特别从「对比传统」视角出发，支柱要体现与传统中药/奶茶的差异。',
+      '本次请特别从「场景渗透」视角出发，支柱要体现不同生活场景的切入。',
+      '本次请特别从「信任建立」视角出发，支柱要体现专业背书和用户证言。',
+      '本次请特别从「健康焦虑」视角出发，支柱要体现亚健康人群的痛点和解决方案。',
+    ];
+    const seed = creativitySeeds[Math.floor(Math.random() * creativitySeeds.length)];
+    const now = new Date();
+    const timeContext = `当前时间：${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日（${['周日','周一','周二','周三','周四','周五','周六'][now.getDay()]}）`;
+    const enhancedUserPrompt = userPrompt +
+      `\n\n**[本次创意方向种子]**\n${seed}\n${timeContext}\n请确保生成的支柱与之前可能生成的结果有明显差异。`;
+
+    // ==========================================
     // 4. 调用 AI
     // ==========================================
     const openai = createAIClient(request);
@@ -130,7 +151,7 @@ ${kb.products.map(p => `- ${p.name}：${p.function}`).join('\n')}${tasteContext}
       model: modelName,
       messages: [
         { role: 'system', content: finalSystemPrompt },
-        { role: 'user', content: userPrompt },
+        { role: 'user', content: enhancedUserPrompt },
       ],
     };
 
