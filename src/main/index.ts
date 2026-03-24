@@ -6,7 +6,7 @@ import { startFileServer, stopFileServer } from './file-server'
 import { initDatabase, closeDatabase } from '../database/db'
 import { CrashRecovery } from '../core/CrashRecovery'
 
-let mainWindow: BrowserWindow | null = null
+export let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({

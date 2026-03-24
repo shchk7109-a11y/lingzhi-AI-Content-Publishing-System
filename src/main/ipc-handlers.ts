@@ -1,7 +1,11 @@
-import { ipcMain } from 'electron'
+import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { getDatabase } from '../database/db'
 import { ContentDao, AccountDao, MatchRecordDao, TaskDao, MatchRuleDao } from '../database/dao'
 import { BitBrowserManager } from '../core/BitBrowserManager'
+import { WindowPool } from '../core/WindowPool'
+import { HumanBehaviorEngine } from '../core/HumanBehaviorEngine'
+import { XiaohongshuPublisher } from '../core/publishers/XiaohongshuPublisher'
+import type { PublishContent } from '../core/publishers/BasePublisher'
 import { DEFAULT_SETTINGS } from '../shared/constants'
 import type { SystemSettings } from '../shared/types'
 
@@ -11,12 +15,17 @@ const matchRecordDao = new MatchRecordDao()
 const taskDao = new TaskDao()
 const matchRuleDao = new MatchRuleDao()
 const bitManager = new BitBrowserManager()
+const windowPool = new WindowPool(bitManager, 1)
 
 // 内存中的设置（启动时用默认值，可通过settings:update修改）
 let currentSettings: SystemSettings = { ...DEFAULT_SETTINGS } as SystemSettings
 
 export function getBitManager(): BitBrowserManager {
   return bitManager
+}
+
+export function getWindowPool(): WindowPool {
+  return windowPool
 }
 
 export function registerIpcHandlers(): void {
@@ -211,5 +220,79 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('settings:testBitConnection', async () => {
     return bitManager.healthCheck()
+  })
+
+  // ===== 文件选择对话框 =====
+  ipcMain.handle('dialog:selectImages', async () => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return []
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+    })
+    return result.filePaths
+  })
+
+  // ===== 发布测试 =====
+  ipcMain.handle('publish:test', async (_event, params: {
+    profileId: string
+    title: string
+    content: string
+    tags: string[]
+    imagePaths: string[]
+    accountLevel: string
+  }) => {
+    const win = BrowserWindow.getFocusedWindow()
+
+    const sendStep = (data: Record<string, unknown>) => {
+      win?.webContents.send('publish:step-update', data)
+    }
+
+    let acquired = false
+    try {
+      sendStep({ step: 'acquire', status: 'running' })
+
+      const slot = await windowPool.acquire(params.profileId)
+      if (!slot) {
+        throw new Error('获取浏览器窗口超时')
+      }
+      acquired = true
+
+      sendStep({ step: 'acquire', status: 'completed', duration: 0 })
+
+      const behavior = new HumanBehaviorEngine()
+      const publisher = new XiaohongshuPublisher(slot.page, behavior)
+
+      // 设置步骤进度回调
+      publisher.setStepCallback((update) => {
+        sendStep(update)
+      })
+
+      const publishContent: PublishContent = {
+        title: params.title,
+        content: params.content,
+        tags: params.tags,
+        imagePaths: params.imagePaths
+      }
+
+      const result = await publisher.publish(publishContent, params.accountLevel)
+
+      return result
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error)
+      sendStep({ step: 'error', status: 'failed', error: errMsg })
+      return { success: false, error: errMsg, screenshots: [], steps: [] }
+    } finally {
+      if (acquired) {
+        try {
+          await windowPool.release(params.profileId)
+        } catch { /* ignore */ }
+      }
+    }
+  })
+
+  // ===== 窗口池状态 =====
+  ipcMain.handle('windowPool:status', () => {
+    return windowPool.getStatus()
   })
 }

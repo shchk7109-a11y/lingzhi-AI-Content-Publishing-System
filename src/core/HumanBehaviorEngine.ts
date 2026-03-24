@@ -1,104 +1,322 @@
 import type { Page } from 'puppeteer-core'
 
+function randomBetween(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min
+}
+
+function isAscii(char: string): boolean {
+  return char.charCodeAt(0) < 128
+}
+
+function isPunctuation(char: string): boolean {
+  return /[，。！？、；：""''…—,.!?;:'"()\-]/.test(char)
+}
+
+/**
+ * 三阶贝塞尔曲线插值
+ */
+function cubicBezier(
+  t: number,
+  p0: number,
+  p1: number,
+  p2: number,
+  p3: number
+): number {
+  const u = 1 - t
+  return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3
+}
+
 /**
  * 拟人行为引擎
  * 模拟人类操作：打字、鼠标移动、浏览、滚动、点赞等
  */
 export class HumanBehaviorEngine {
-  private page: Page
+  private lastMouseX = 0
+  private lastMouseY = 0
 
-  constructor(page: Page) {
-    this.page = page
+  /**
+   * 模拟真人打字（带选择器，先点击输入框）
+   */
+  async humanType(page: Page, selector: string, text: string): Promise<void> {
+    await this.humanClick(page, selector)
+    await this.randomDelay(200, 500)
+    await this.humanTypeInPlace(page, text)
   }
 
   /**
-   * 拟人打字：模拟人类键入速度和节奏
-   * @param selector 输入框选择器
-   * @param text 输入文本
-   * @param wpm 每分钟字数（默认80-120随机）
+   * 模拟真人打字（在当前焦点元素上直接输入）
+   * - 每字符间隔 80-200ms
+   * - 每输入 15-30 个字符后停顿 300-800ms
+   * - 标点符号后额外停顿 200-500ms
    */
-  async humanType(selector: string, text: string, wpm?: number): Promise<void> {
-    // TODO: implement
-    // 1. 点击输入框
-    // 2. 逐字输入，每字间隔随机（基于wpm）
-    // 3. 偶尔打错字再删除（低概率）
-    // 4. 偶尔暂停模拟思考
-    void selector
-    void text
-    void wpm
+  async humanTypeInPlace(page: Page, text: string): Promise<void> {
+    let charsSinceBreak = 0
+    const breakInterval = randomBetween(15, 30)
+
+    for (const char of text) {
+      // ASCII字符用 press，中文等非ASCII用 insertText
+      if (isAscii(char) && char.length === 1 && char !== ' ') {
+        await page.keyboard.press(char as any)
+      } else {
+        await page.keyboard.insertText(char)
+      }
+
+      charsSinceBreak++
+
+      // 基础字符间隔
+      await this.randomDelay(80, 200)
+
+      // 标点符号后额外停顿
+      if (isPunctuation(char)) {
+        await this.randomDelay(200, 500)
+      }
+
+      // 定期"思考"停顿
+      if (charsSinceBreak >= breakInterval) {
+        await this.randomDelay(300, 800)
+        charsSinceBreak = 0
+      }
+    }
   }
 
   /**
-   * 拟人鼠标移动：贝塞尔曲线模拟鼠标轨迹
-   * @param x 目标X坐标
-   * @param y 目标Y坐标
+   * 贝塞尔曲线鼠标移动
+   * - 3阶贝塞尔曲线，随机控制点
+   * - 20-40步离散化
+   * - ease-in-out速度曲线
+   * - 最终偏离2-5px模拟手抖
    */
-  async humanMouseMove(x: number, y: number): Promise<void> {
-    // TODO: implement
-    // 1. 获取当前鼠标位置
-    // 2. 生成贝塞尔曲线控制点
-    // 3. 沿曲线逐步移动鼠标
-    // 4. 速度从快到慢（模拟人类减速定位）
-    void x
-    void y
+  async humanMouseMove(page: Page, targetX: number, targetY: number): Promise<void> {
+    const startX = this.lastMouseX
+    const startY = this.lastMouseY
+    const steps = randomBetween(20, 40)
+    const path = this.generateBezierPath(startX, startY, targetX, targetY, steps)
+
+    for (let i = 0; i < path.length; i++) {
+      await page.mouse.move(path[i].x, path[i].y)
+      // ease-in-out: 首尾慢，中间快
+      const progress = i / path.length
+      const delay = progress < 0.3 || progress > 0.7
+        ? randomBetween(8, 20)
+        : randomBetween(2, 8)
+      await new Promise((r) => setTimeout(r, delay))
+    }
+
+    this.lastMouseX = targetX
+    this.lastMouseY = targetY
   }
 
   /**
-   * 拟人点击：移动到元素附近 → 微调 → 点击
+   * 模拟真人点击
+   * - 贝塞尔移动到目标附近
+   * - 随机偏移 2-5px
+   * - mousedown/mouseup 间隔 50-150ms
    */
-  async humanClick(selector: string): Promise<void> {
-    // TODO: implement
-    // 1. 获取元素的中心坐标（加随机偏移）
-    // 2. humanMouseMove到目标
-    // 3. 随机延迟后click
-    void selector
+  async humanClick(page: Page, selector: string): Promise<void> {
+    const el = await page.$(selector)
+    if (!el) throw new Error(`Element not found: ${selector}`)
+
+    const box = await el.boundingBox()
+    if (!box) throw new Error(`Element not visible: ${selector}`)
+
+    const x = box.x + box.width / 2 + randomBetween(-3, 3)
+    const y = box.y + box.height / 2 + randomBetween(-3, 3)
+
+    await this.humanClickAt(page, x, y)
   }
 
   /**
-   * 拟人滚动：模拟浏览翻页
-   * @param direction 方向
-   * @param distance 滚动距离（像素）
+   * 模拟真人点击坐标位置
    */
-  async humanScroll(direction: 'up' | 'down' = 'down', distance: number = 300): Promise<void> {
-    // TODO: implement
-    // 1. 多次小幅滚动，每次间隔随机
-    // 2. 偶尔回滚一小段
-    // 3. 中间随机暂停
-    void direction
-    void distance
+  async humanClickAt(page: Page, x: number, y: number): Promise<void> {
+    // 加微小偏移
+    const offsetX = x + randomBetween(-2, 2)
+    const offsetY = y + randomBetween(-2, 2)
+
+    await this.humanMouseMove(page, offsetX, offsetY)
+    await this.randomDelay(50, 150)
+
+    await page.mouse.down()
+    await this.randomDelay(50, 150)
+    await page.mouse.up()
   }
 
   /**
-   * 暖号行为：登录后浏览首页、点赞、查看内容
-   * @param durationMs 暖号时长
+   * 模拟页面滚动浏览
+   * - 变速滚动：每次 100-400px
+   * - 滚动间隔 800-2000ms
+   * - 10% 概率回滚 50-200px
    */
-  async warmup(durationMs: number = 30000): Promise<void> {
-    // TODO: implement
-    // 1. 随机滚动浏览首页
-    // 2. 随机点击几个内容
-    // 3. 随机点赞1-2个内容
-    // 4. 返回首页
-    // 5. 持续到durationMs
-    void durationMs
+  async humanScroll(page: Page, scrollCount: number = 3): Promise<void> {
+    for (let i = 0; i < scrollCount; i++) {
+      const distance = randomBetween(100, 400)
+      await page.mouse.wheel({ deltaY: distance })
+      await this.randomDelay(800, 2000)
+
+      // 10% 概率回滚
+      if (Math.random() < 0.1) {
+        const backDistance = randomBetween(50, 200)
+        await page.mouse.wheel({ deltaY: -backDistance })
+        await this.randomDelay(500, 1000)
+      }
+    }
   }
 
   /**
-   * 随机延迟
+   * 发布前预热：浏览小红书首页
    */
-  async randomDelay(minMs: number = 500, maxMs: number = 2000): Promise<void> {
-    const delay = Math.floor(Math.random() * (maxMs - minMs) + minMs)
+  async warmup(page: Page, intensity: 'high' | 'medium' | 'low' = 'medium'): Promise<void> {
+    const browseCount = intensity === 'high' ? randomBetween(3, 5)
+      : intensity === 'medium' ? randomBetween(2, 3)
+      : randomBetween(1, 2)
+
+    console.log(`[HumanBehavior] Warmup: browsing ${browseCount} notes (intensity=${intensity})`)
+
+    // 浏览首页
+    await page.goto('https://www.xiaohongshu.com/explore', {
+      waitUntil: 'domcontentloaded',
+      timeout: 20000
+    }).catch(() => { /* 可能已在首页 */ })
+
+    await this.randomDelay(2000, 4000)
+
+    // 滚动首页
+    await this.humanScroll(page, randomBetween(2, 4))
+
+    // 随机点击笔记浏览
+    for (let i = 0; i < browseCount; i++) {
+      try {
+        // 尝试点击Feed中的笔记
+        const noteLinks = await page.$$('a[href*="/explore/"]')
+        if (noteLinks.length === 0) break
+
+        const randomIndex = randomBetween(0, Math.min(noteLinks.length - 1, 10))
+        const link = noteLinks[randomIndex]
+        const box = await link.boundingBox()
+        if (box) {
+          await this.humanClickAt(page, box.x + box.width / 2, box.y + box.height / 2)
+
+          // 在笔记页停留
+          const stayTime = intensity === 'high' ? randomBetween(5000, 10000)
+            : intensity === 'medium' ? randomBetween(3000, 8000)
+            : randomBetween(2000, 5000)
+          await this.randomDelay(stayTime, stayTime + 2000)
+
+          // 滚动浏览笔记内容
+          await this.humanScroll(page, randomBetween(1, 3))
+
+          // 新号高概率点赞
+          if (intensity === 'high' && Math.random() < 0.5) {
+            try {
+              const likeBtn = await page.$('.like-wrapper, [class*="like"], .engageBar .like')
+              if (likeBtn) {
+                const likeBox = await likeBtn.boundingBox()
+                if (likeBox) {
+                  await this.humanClickAt(page, likeBox.x + likeBox.width / 2, likeBox.y + likeBox.height / 2)
+                  await this.randomDelay(500, 1500)
+                }
+              }
+            } catch { /* 点赞失败可以忽略 */ }
+          }
+
+          // 返回
+          await page.goBack().catch(() => {})
+          await this.randomDelay(1500, 3000)
+        }
+      } catch {
+        // 单个笔记浏览失败，继续下一个
+        await this.randomDelay(1000, 2000)
+      }
+    }
+
+    console.log('[HumanBehavior] Warmup completed')
+  }
+
+  /**
+   * 发布后冷却
+   */
+  async cooldown(page: Page): Promise<void> {
+    console.log('[HumanBehavior] Cooldown: post-publish browsing')
+
+    try {
+      // 回到首页浏览
+      await page.goto('https://www.xiaohongshu.com/explore', {
+        waitUntil: 'domcontentloaded',
+        timeout: 15000
+      }).catch(() => {})
+
+      await this.randomDelay(2000, 5000)
+      await this.humanScroll(page, randomBetween(1, 3))
+
+      // 可能浏览1篇笔记
+      if (Math.random() < 0.5) {
+        const noteLinks = await page.$$('a[href*="/explore/"]')
+        if (noteLinks.length > 0) {
+          const link = noteLinks[randomBetween(0, Math.min(noteLinks.length - 1, 5))]
+          const box = await link.boundingBox()
+          if (box) {
+            await this.humanClickAt(page, box.x + box.width / 2, box.y + box.height / 2)
+            await this.randomDelay(3000, 8000)
+          }
+        }
+      }
+    } catch {
+      // 冷却失败不影响主流程
+    }
+
+    // 最后停留一会儿
+    await this.randomDelay(5000, 15000)
+    console.log('[HumanBehavior] Cooldown completed')
+  }
+
+  /**
+   * 随机等待
+   */
+  async randomDelay(minMs: number, maxMs: number): Promise<void> {
+    const delay = randomBetween(minMs, maxMs)
     await new Promise((resolve) => setTimeout(resolve, delay))
+  }
+
+  /**
+   * 等待元素出现并可见，带超时和重试
+   */
+  async waitForElement(page: Page, selector: string, timeoutMs: number = 10000): Promise<boolean> {
+    try {
+      await page.waitForSelector(selector, { visible: true, timeout: timeoutMs })
+      return true
+    } catch {
+      return false
+    }
   }
 
   /**
    * 生成贝塞尔曲线路径点
    */
   private generateBezierPath(
-    _startX: number, _startY: number,
-    _endX: number, _endY: number,
-    _steps: number
+    startX: number, startY: number,
+    endX: number, endY: number,
+    steps: number
   ): Array<{ x: number; y: number }> {
-    // TODO: implement
-    return []
+    const points: Array<{ x: number; y: number }> = []
+
+    // 随机控制点（在起点和终点的中间区域偏移）
+    const midX = (startX + endX) / 2
+    const midY = (startY + endY) / 2
+    const spread = Math.max(Math.abs(endX - startX), Math.abs(endY - startY)) * 0.3
+
+    const cp1x = midX + randomBetween(-spread, spread) * 0.5
+    const cp1y = midY + randomBetween(-spread, spread) * 0.5
+    const cp2x = midX + randomBetween(-spread, spread) * 0.5
+    const cp2y = midY + randomBetween(-spread, spread) * 0.5
+
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps
+      points.push({
+        x: Math.round(cubicBezier(t, startX, cp1x, cp2x, endX)),
+        y: Math.round(cubicBezier(t, startY, cp1y, cp2y, endY))
+      })
+    }
+
+    return points
   }
 }

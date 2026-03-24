@@ -69,12 +69,36 @@ const api = {
     dashboard: () => ipcRenderer.invoke('db:stats:dashboard')
   },
 
+  // 发布测试
+  publish: {
+    test: (params: {
+      profileId: string; title: string; content: string
+      tags: string[]; imagePaths: string[]; accountLevel: string
+    }) => ipcRenderer.invoke('publish:test', params)
+  },
+
+  // 文件对话框
+  dialog: {
+    selectImages: () => ipcRenderer.invoke('dialog:selectImages') as Promise<string[]>
+  },
+
+  // 窗口池
+  windowPool: {
+    status: () => ipcRenderer.invoke('windowPool:status')
+  },
+
   // 事件监听
   onTaskProgress: (callback: (data: unknown) => void) => {
     ipcRenderer.on('task:progress', (_event, data) => callback(data))
   },
   onLog: (callback: (data: unknown) => void) => {
     ipcRenderer.on('log:message', (_event, data) => callback(data))
+  },
+  onPublishStepUpdate: (callback: (data: unknown) => void) => {
+    ipcRenderer.on('publish:step-update', (_event, data) => callback(data))
+  },
+  removePublishStepListener: () => {
+    ipcRenderer.removeAllListeners('publish:step-update')
   }
 }
 
