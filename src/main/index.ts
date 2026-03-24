@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { registerIpcHandlers } from './ipc-handlers'
+import { registerIpcHandlers, getBitManager } from './ipc-handlers'
 import { startFileServer, stopFileServer } from './file-server'
 import { initDatabase, closeDatabase } from '../database/db'
 import { CrashRecovery } from '../core/CrashRecovery'
@@ -15,7 +15,7 @@ function createWindow(): void {
     minWidth: 1200,
     minHeight: 800,
     show: false,
-    title: '灵芝水铺智能发布系统 v3.0',
+    title: '灵芝水铺 - AI多平台智能发布系统',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -47,20 +47,25 @@ app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // 初始化数据库
+  // 1. 初始化数据库
+  console.log('[Main] Initializing database...')
   initDatabase()
 
-  // 启动本地文件服务
+  // 2. 启动本地文件服务
+  console.log('[Main] Starting file server...')
   startFileServer()
 
-  // 启动自检 - 崩溃恢复
-  const crashRecovery = new CrashRecovery()
-  await crashRecovery.startupCheck()
-
-  // 注册IPC处理器
+  // 3. 注册IPC处理器（需在CrashRecovery前注册，以便BitManager可用）
+  console.log('[Main] Registering IPC handlers...')
   registerIpcHandlers()
 
-  // 创建主窗口
+  // 4. 启动自检 - 崩溃恢复
+  console.log('[Main] Running crash recovery...')
+  const crashRecovery = new CrashRecovery(getBitManager())
+  const result = await crashRecovery.startupCheck()
+  console.log(`[Main] Crash recovery done: recovered=${result.recovered}, cleaned=${result.cleaned}`)
+
+  // 5. 创建主窗口
   createWindow()
 
   app.on('activate', () => {

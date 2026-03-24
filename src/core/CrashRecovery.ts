@@ -1,4 +1,5 @@
 import { getDatabase } from '../database/db'
+import { BitBrowserManager } from './BitBrowserManager'
 import type { Task } from '../shared/types'
 
 /**
@@ -6,11 +7,17 @@ import type { Task } from '../shared/types'
  * 启动自检 + 僵尸进程清理 + 断点续传
  */
 export class CrashRecovery {
+  private bitManager: BitBrowserManager
+
+  constructor(bitManager?: BitBrowserManager) {
+    this.bitManager = bitManager || new BitBrowserManager()
+  }
+
   /**
    * 启动自检 - 应用启动时调用
-   * 1. 检测上次异常退出遗留的running任务
-   * 2. 清理僵尸浏览器进程
-   * 3. 恢复可断点续传的任务
+   * 1. 扫描tasks表中status='running'的任务，全部重置为'failed'
+   * 2. 调用BitBrowserManager.forceCloseAll() 清理僵尸浏览器窗口
+   * 3. 记录恢复日志
    */
   async startupCheck(): Promise<{ recovered: number; cleaned: number }> {
     let recovered = 0
@@ -19,23 +26,32 @@ export class CrashRecovery {
     try {
       // 检测遗留的running任务
       const staleTasks = this.findStaleTasks()
-      for (const task of staleTasks) {
-        if (task.last_step && this.canResume(task)) {
-          // 标记为可恢复
-          this.markForResume(task.id, task.last_step)
-          recovered++
-        } else {
-          // 标记为失败
-          this.markAsFailed(task.id, '应用异常退出，任务中断')
-          cleaned++
+
+      if (staleTasks.length > 0) {
+        console.log(`[CrashRecovery] Found ${staleTasks.length} stale running tasks`)
+
+        for (const task of staleTasks) {
+          if (task.last_step && this.canResume(task)) {
+            this.markForResume(task.id, task.last_step)
+            recovered++
+            console.log(`[CrashRecovery] Task #${task.id} marked for resume from step [${task.last_step}]`)
+          } else {
+            this.markAsFailed(task.id, '应用异常重启')
+            cleaned++
+            console.log(`[CrashRecovery] Task #${task.id} marked as failed (app crash)`)
+          }
         }
       }
 
-      // 清理僵尸进程
-      const zombies = await this.cleanZombieProcesses()
-      cleaned += zombies
+      // 清理僵尸浏览器窗口
+      try {
+        await this.bitManager.forceCloseAll()
+        console.log('[CrashRecovery] Zombie browser cleanup completed')
+      } catch (error) {
+        console.warn('[CrashRecovery] Browser cleanup skipped (Bit not running):', (error as Error).message)
+      }
 
-      console.log(`[CrashRecovery] Startup check: recovered=${recovered}, cleaned=${cleaned}`)
+      console.log(`[CrashRecovery] Startup check complete: recovered=${recovered}, cleaned=${cleaned}`)
     } catch (error) {
       console.error('[CrashRecovery] Startup check failed:', error)
     }
@@ -59,11 +75,10 @@ export class CrashRecovery {
 
   /**
    * 判断任务是否可以从断点恢复
+   * warmup/navigate/input步骤可以安全恢复
+   * upload_media/publish步骤不宜从中间恢复（可能产生重复内容）
    */
   canResume(task: Task): boolean {
-    // TODO: implement
-    // 根据last_step判断是否可以安全恢复
-    // 某些步骤（如upload_media、publish）不宜从中间恢复
     const resumableSteps = ['warmup', 'navigate', 'input_title', 'input_content', 'add_tags']
     return task.last_step !== null && resumableSteps.includes(task.last_step)
   }
@@ -84,17 +99,6 @@ export class CrashRecovery {
     const db = getDatabase()
     db.prepare("UPDATE tasks SET status = 'failed', error_log = ?, finished_at = datetime('now') WHERE id = ?")
       .run(reason, taskId)
-  }
-
-  /**
-   * 清理僵尸浏览器进程
-   */
-  async cleanZombieProcesses(): Promise<number> {
-    // TODO: implement
-    // 1. 检查系统中是否有残留的Bit浏览器子进程
-    // 2. 对比当前任务列表，终止无对应任务的进程
-    // 3. 返回清理的进程数
-    return 0
   }
 
   /**

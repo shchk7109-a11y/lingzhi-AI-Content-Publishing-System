@@ -1,28 +1,38 @@
 import { create } from 'zustand'
 import type { ContentItem } from '../../shared/types'
 
+interface ContentFilters {
+  status?: string
+  platform?: string
+  search?: string
+}
+
 interface ContentState {
   items: ContentItem[]
   loading: boolean
-  loadContents: (filters?: Record<string, string>) => Promise<void>
-  importContents: (contents: Record<string, unknown>[]) => Promise<void>
+  filters: ContentFilters
+  setFilters: (f: Partial<ContentFilters>) => void
+  loadContents: () => Promise<void>
+  importContents: (contents: Record<string, unknown>[]) => Promise<number>
   deleteContent: (id: number) => Promise<void>
+  updateTags: (id: number, tags: string[]) => Promise<void>
 }
 
-export const useContentStore = create<ContentState>((set) => ({
+export const useContentStore = create<ContentState>((set, get) => ({
   items: [],
   loading: false,
+  filters: {},
 
-  loadContents: async (filters?) => {
+  setFilters: (f) => {
+    set((state) => ({ filters: { ...state.filters, ...f } }))
+  },
+
+  loadContents: async () => {
     set({ loading: true })
     try {
-      const data = await window.api.contentList(filters)
-      const items = data.map((row: Record<string, unknown>) => ({
-        ...row,
-        tags: JSON.parse((row.tags as string) || '[]'),
-        image_paths: JSON.parse((row.image_paths as string) || '[]')
-      }))
-      set({ items })
+      const { filters } = get()
+      const data = await window.api.content.getAll(filters as Record<string, string>)
+      set({ items: data as ContentItem[] })
     } catch {
       // 开发模式下API可能未就绪
     }
@@ -30,10 +40,18 @@ export const useContentStore = create<ContentState>((set) => ({
   },
 
   importContents: async (contents) => {
-    await window.api.contentImport(contents)
+    const count = await window.api.content.batchInsert(contents)
+    await get().loadContents()
+    return count as number
   },
 
   deleteContent: async (id) => {
-    await window.api.contentDelete(id)
+    await window.api.content.delete(id)
+    await get().loadContents()
+  },
+
+  updateTags: async (id, tags) => {
+    await window.api.content.updateTags(id, tags)
+    await get().loadContents()
   }
 }))

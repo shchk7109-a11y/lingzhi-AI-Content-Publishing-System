@@ -1,0 +1,5 @@
+export { ContentDao } from './ContentDao'
+export { AccountDao } from './AccountDao'
+export { MatchRecordDao } from './MatchRecordDao'
+export { TaskDao } from './TaskDao'
+export { PublishLogDao, ProxyPoolDao, MatchRuleDao } from './OtherDaos'

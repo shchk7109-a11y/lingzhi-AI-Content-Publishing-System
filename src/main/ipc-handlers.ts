@@ -1,167 +1,215 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../database/db'
+import { ContentDao, AccountDao, MatchRecordDao, TaskDao, MatchRuleDao } from '../database/dao'
+import { BitBrowserManager } from '../core/BitBrowserManager'
+import { DEFAULT_SETTINGS } from '../shared/constants'
+import type { SystemSettings } from '../shared/types'
+
+const contentDao = new ContentDao()
+const accountDao = new AccountDao()
+const matchRecordDao = new MatchRecordDao()
+const taskDao = new TaskDao()
+const matchRuleDao = new MatchRuleDao()
+const bitManager = new BitBrowserManager()
+
+// 内存中的设置（启动时用默认值，可通过settings:update修改）
+let currentSettings: SystemSettings = { ...DEFAULT_SETTINGS } as SystemSettings
+
+export function getBitManager(): BitBrowserManager {
+  return bitManager
+}
 
 export function registerIpcHandlers(): void {
-  // ===== 内容池相关 =====
-  ipcMain.handle('content:list', async (_event, filters?: Record<string, string>) => {
-    const db = getDatabase()
-    let sql = 'SELECT * FROM content_pool WHERE 1=1'
-    const params: string[] = []
-
-    if (filters?.status) {
-      sql += ' AND status = ?'
-      params.push(filters.status)
-    }
-    if (filters?.platform) {
-      sql += ' AND platform = ?'
-      params.push(filters.platform)
-    }
-
-    sql += ' ORDER BY created_at DESC'
-    return db.prepare(sql).all(...params)
+  // ===== 内容池操作 =====
+  ipcMain.handle('db:content:getAll', (_event, filters?: Record<string, string>) => {
+    return contentDao.getAll(filters)
   })
 
-  ipcMain.handle('content:import', async (_event, contents: Record<string, unknown>[]) => {
-    // TODO: implement - 批量导入内容到内容池
-    const db = getDatabase()
-    const insert = db.prepare(`
-      INSERT OR IGNORE INTO content_pool (draft_id, title, content, tags, image_paths, video_path, platform, media_type, gender, age_group, health_focus, product_line)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    const transaction = db.transaction((items: Record<string, unknown>[]) => {
-      for (const item of items) {
-        insert.run(
-          item.draft_id, item.title, item.content,
-          JSON.stringify(item.tags || []),
-          JSON.stringify(item.image_paths || []),
-          item.video_path || '',
-          item.platform || 'all',
-          item.media_type || 'image',
-          item.gender || 'all',
-          item.age_group || 'all',
-          item.health_focus || 'general',
-          item.product_line || 'all'
-        )
-      }
-    })
-    transaction(contents)
-    return { success: true, count: contents.length }
+  ipcMain.handle('db:content:getById', (_event, id: number) => {
+    return contentDao.getById(id)
   })
 
-  ipcMain.handle('content:update', async (_event, id: number, data: Record<string, unknown>) => {
-    // TODO: implement - 更新内容项
-    void id
-    void data
+  ipcMain.handle('db:content:insert', (_event, data: Record<string, unknown>) => {
+    return contentDao.insert(data as Parameters<ContentDao['insert']>[0])
   })
 
-  ipcMain.handle('content:delete', async (_event, id: number) => {
-    const db = getDatabase()
-    db.prepare('DELETE FROM content_pool WHERE id = ?').run(id)
+  ipcMain.handle('db:content:batchInsert', (_event, items: Record<string, unknown>[]) => {
+    return contentDao.batchInsert(items as Parameters<ContentDao['batchInsert']>[0])
+  })
+
+  ipcMain.handle('db:content:updateStatus', (_event, id: number, status: string) => {
+    contentDao.updateStatus(id, status)
     return { success: true }
   })
 
-  // ===== 账号相关 =====
-  ipcMain.handle('account:list', async () => {
-    const db = getDatabase()
-    return db.prepare('SELECT * FROM accounts ORDER BY created_at DESC').all()
-  })
-
-  ipcMain.handle('account:create', async (_event, account: Record<string, unknown>) => {
-    // TODO: implement - 创建账号
-    void account
-  })
-
-  ipcMain.handle('account:update', async (_event, id: number, data: Record<string, unknown>) => {
-    // TODO: implement - 更新账号
-    void id
-    void data
-  })
-
-  ipcMain.handle('account:delete', async (_event, id: number) => {
-    const db = getDatabase()
-    db.prepare('DELETE FROM accounts WHERE id = ?').run(id)
+  ipcMain.handle('db:content:updateTags', (_event, id: number, tags: string[]) => {
+    contentDao.updateTags(id, tags)
     return { success: true }
   })
 
-  // ===== 匹配相关 =====
-  ipcMain.handle('match:run', async () => {
-    // TODO: implement - 执行智能匹配
+  ipcMain.handle('db:content:delete', (_event, id: number) => {
+    contentDao.delete(id)
+    return { success: true }
   })
 
-  ipcMain.handle('match:list', async () => {
+  // ===== 账号操作 =====
+  ipcMain.handle('db:accounts:getAll', (_event, filters?: Record<string, string>) => {
+    return accountDao.getAll(filters)
+  })
+
+  ipcMain.handle('db:accounts:getById', (_event, id: number) => {
+    return accountDao.getById(id)
+  })
+
+  ipcMain.handle('db:accounts:insert', (_event, data: Record<string, unknown>) => {
+    return accountDao.insert(data as Parameters<AccountDao['insert']>[0])
+  })
+
+  ipcMain.handle('db:accounts:batchInsert', (_event, items: Record<string, unknown>[]) => {
+    return accountDao.batchInsert(items as Parameters<AccountDao['batchInsert']>[0])
+  })
+
+  ipcMain.handle('db:accounts:updatePersona', (_event, id: number, persona: Record<string, string>) => {
+    accountDao.updatePersona(id, persona)
+    return { success: true }
+  })
+
+  ipcMain.handle('db:accounts:updateStatus', (_event, id: number, status: string) => {
+    accountDao.updateStatus(id, status)
+    return { success: true }
+  })
+
+  ipcMain.handle('db:accounts:delete', (_event, id: number) => {
+    accountDao.delete(id)
+    return { success: true }
+  })
+
+  // ===== 匹配记录操作 =====
+  ipcMain.handle('db:matchRecords:getAll', (_event, filters?: Record<string, string>) => {
+    return matchRecordDao.getAll(filters)
+  })
+
+  ipcMain.handle('db:matchRecords:insert', (_event, data: Record<string, unknown>) => {
+    return matchRecordDao.insert(data as Parameters<MatchRecordDao['insert']>[0])
+  })
+
+  ipcMain.handle('db:matchRecords:updateStatus', (_event, id: number, status: string) => {
+    matchRecordDao.updateStatus(id, status)
+    return { success: true }
+  })
+
+  // ===== 任务操作 =====
+  ipcMain.handle('db:tasks:getAll', (_event, filters?: Record<string, string>) => {
+    return taskDao.getAll(filters)
+  })
+
+  ipcMain.handle('db:tasks:getById', (_event, id: number) => {
+    return taskDao.getById(id)
+  })
+
+  ipcMain.handle('db:tasks:updateStatus', (_event, id: number, status: string, extra?: Record<string, unknown>) => {
+    taskDao.updateStatus(id, status, extra as Parameters<TaskDao['updateStatus']>[2])
+    return { success: true }
+  })
+
+  ipcMain.handle('db:tasks:getRunning', () => {
+    return taskDao.getRunningTasks()
+  })
+
+  ipcMain.handle('db:tasks:getQueued', (_event, limit?: number) => {
+    return taskDao.getQueuedTasks(limit)
+  })
+
+  // ===== 匹配规则操作 =====
+  ipcMain.handle('db:matchRules:getAll', () => {
+    return matchRuleDao.getAll()
+  })
+
+  ipcMain.handle('db:matchRules:insert', (_event, rule: Record<string, unknown>) => {
+    return matchRuleDao.insert(rule as Parameters<MatchRuleDao['insert']>[0])
+  })
+
+  ipcMain.handle('db:matchRules:updateEnabled', (_event, id: number, enabled: boolean) => {
+    matchRuleDao.updateEnabled(id, enabled)
+    return { success: true }
+  })
+
+  ipcMain.handle('db:matchRules:delete', (_event, id: number) => {
+    matchRuleDao.delete(id)
+    return { success: true }
+  })
+
+  // ===== 统计数据 =====
+  ipcMain.handle('db:stats:dashboard', () => {
     const db = getDatabase()
-    return db.prepare(`
-      SELECT mr.*, cp.title as content_title, a.nickname as account_nickname
-      FROM match_records mr
-      LEFT JOIN content_pool cp ON mr.content_id = cp.id
-      LEFT JOIN accounts a ON mr.account_id = a.id
-      ORDER BY mr.matched_at DESC
-    `).all()
-  })
+    const totalContent = (db.prepare('SELECT COUNT(*) as count FROM content_pool').get() as { count: number }).count
+    const totalAccounts = (db.prepare('SELECT COUNT(*) as count FROM accounts').get() as { count: number }).count
+    const totalTasks = (db.prepare('SELECT COUNT(*) as count FROM tasks').get() as { count: number }).count
+    const successTasks = (db.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'success'").get() as { count: number }).count
+    const pendingTasks = (db.prepare("SELECT COUNT(*) as count FROM tasks WHERE status IN ('pending', 'queued')").get() as { count: number }).count
+    const activeAccounts = (db.prepare("SELECT COUNT(*) as count FROM accounts WHERE status = 'active'").get() as { count: number }).count
 
-  ipcMain.handle('match:confirm', async (_event, matchIds: number[]) => {
-    // TODO: implement - 确认匹配并创建发布任务
-    void matchIds
-  })
-
-  // ===== 任务相关 =====
-  ipcMain.handle('task:list', async () => {
-    const db = getDatabase()
-    return db.prepare(`
-      SELECT t.*, cp.title as content_title, a.nickname as account_nickname
-      FROM tasks t
-      LEFT JOIN content_pool cp ON t.content_id = cp.id
-      LEFT JOIN accounts a ON t.account_id = a.id
-      ORDER BY t.id DESC
-    `).all()
-  })
-
-  ipcMain.handle('task:start', async (_event, taskIds: number[]) => {
-    // TODO: implement - 启动发布任务
-    void taskIds
-  })
-
-  ipcMain.handle('task:retry', async (_event, taskId: number) => {
-    // TODO: implement - 重试失败任务
-    void taskId
-  })
-
-  // ===== 设置相关 =====
-  ipcMain.handle('settings:get', async () => {
-    // TODO: implement - 从数据库或配置文件读取设置
-    const { DEFAULT_SETTINGS } = await import('../shared/constants')
-    return DEFAULT_SETTINGS
-  })
-
-  ipcMain.handle('settings:save', async (_event, settings: Record<string, unknown>) => {
-    // TODO: implement - 保存设置
-    void settings
-  })
-
-  // ===== 匹配规则相关 =====
-  ipcMain.handle('rules:list', async () => {
-    const db = getDatabase()
-    return db.prepare('SELECT * FROM match_rules ORDER BY id DESC').all()
-  })
-
-  ipcMain.handle('rules:save', async (_event, rule: Record<string, unknown>) => {
-    // TODO: implement - 保存匹配规则
-    void rule
-  })
-
-  // ===== 统计相关 =====
-  ipcMain.handle('stats:dashboard', async () => {
-    const db = getDatabase()
-    const totalContent = db.prepare('SELECT COUNT(*) as count FROM content_pool').get() as { count: number }
-    const totalAccounts = db.prepare('SELECT COUNT(*) as count FROM accounts').get() as { count: number }
-    const totalTasks = db.prepare('SELECT COUNT(*) as count FROM tasks').get() as { count: number }
-    const successTasks = db.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'success'").get() as { count: number }
+    const successRate = totalTasks > 0 ? Math.round((successTasks / totalTasks) * 100) : 0
 
     return {
-      totalContent: totalContent.count,
-      totalAccounts: totalAccounts.count,
-      totalTasks: totalTasks.count,
-      successTasks: successTasks.count
+      totalContent,
+      totalAccounts,
+      totalTasks,
+      successTasks,
+      pendingTasks,
+      activeAccounts,
+      successRate
     }
+  })
+
+  // ===== Bit浏览器操作 =====
+  ipcMain.handle('bit:healthCheck', async () => {
+    return bitManager.healthCheck()
+  })
+
+  ipcMain.handle('bit:openBrowser', async (_event, profileId: string) => {
+    return bitManager.openBrowser(profileId)
+  })
+
+  ipcMain.handle('bit:closeBrowser', async (_event, profileId: string) => {
+    return bitManager.closeBrowser(profileId)
+  })
+
+  ipcMain.handle('bit:getActiveBrowsers', async () => {
+    return bitManager.getActiveBrowsers()
+  })
+
+  ipcMain.handle('bit:getProfileList', async (_event, page?: number, pageSize?: number) => {
+    return bitManager.getProfileList(page, pageSize)
+  })
+
+  // ===== 设置 =====
+  ipcMain.handle('settings:get', () => {
+    return currentSettings
+  })
+
+  ipcMain.handle('settings:update', (_event, key: string, value: unknown) => {
+    ;(currentSettings as Record<string, unknown>)[key] = value
+
+    // 如果更新了Bit端口，同步到BitBrowserManager
+    if (key === 'bitApiPort' && typeof value === 'number') {
+      bitManager.updatePort(value)
+    }
+
+    return { success: true }
+  })
+
+  ipcMain.handle('settings:save', (_event, settings: Record<string, unknown>) => {
+    currentSettings = { ...currentSettings, ...settings } as SystemSettings
+
+    if (settings.bitApiPort && typeof settings.bitApiPort === 'number') {
+      bitManager.updatePort(settings.bitApiPort)
+    }
+
+    return { success: true }
+  })
+
+  ipcMain.handle('settings:testBitConnection', async () => {
+    return bitManager.healthCheck()
   })
 }

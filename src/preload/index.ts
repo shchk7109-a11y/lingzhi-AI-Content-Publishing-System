@@ -1,39 +1,73 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-// 暴露安全的API给渲染进程
 const api = {
   // 内容池
-  contentList: (filters?: Record<string, string>) => ipcRenderer.invoke('content:list', filters),
-  contentImport: (contents: Record<string, unknown>[]) => ipcRenderer.invoke('content:import', contents),
-  contentUpdate: (id: number, data: Record<string, unknown>) => ipcRenderer.invoke('content:update', id, data),
-  contentDelete: (id: number) => ipcRenderer.invoke('content:delete', id),
+  content: {
+    getAll: (filters?: Record<string, string>) => ipcRenderer.invoke('db:content:getAll', filters),
+    getById: (id: number) => ipcRenderer.invoke('db:content:getById', id),
+    insert: (data: Record<string, unknown>) => ipcRenderer.invoke('db:content:insert', data),
+    batchInsert: (items: Record<string, unknown>[]) => ipcRenderer.invoke('db:content:batchInsert', items),
+    updateStatus: (id: number, status: string) => ipcRenderer.invoke('db:content:updateStatus', id, status),
+    updateTags: (id: number, tags: string[]) => ipcRenderer.invoke('db:content:updateTags', id, tags),
+    delete: (id: number) => ipcRenderer.invoke('db:content:delete', id)
+  },
 
   // 账号
-  accountList: () => ipcRenderer.invoke('account:list'),
-  accountCreate: (account: Record<string, unknown>) => ipcRenderer.invoke('account:create', account),
-  accountUpdate: (id: number, data: Record<string, unknown>) => ipcRenderer.invoke('account:update', id, data),
-  accountDelete: (id: number) => ipcRenderer.invoke('account:delete', id),
+  accounts: {
+    getAll: (filters?: Record<string, string>) => ipcRenderer.invoke('db:accounts:getAll', filters),
+    getById: (id: number) => ipcRenderer.invoke('db:accounts:getById', id),
+    insert: (data: Record<string, unknown>) => ipcRenderer.invoke('db:accounts:insert', data),
+    batchInsert: (items: Record<string, unknown>[]) => ipcRenderer.invoke('db:accounts:batchInsert', items),
+    updatePersona: (id: number, persona: Record<string, string>) => ipcRenderer.invoke('db:accounts:updatePersona', id, persona),
+    updateStatus: (id: number, status: string) => ipcRenderer.invoke('db:accounts:updateStatus', id, status),
+    delete: (id: number) => ipcRenderer.invoke('db:accounts:delete', id)
+  },
 
-  // 匹配
-  matchRun: () => ipcRenderer.invoke('match:run'),
-  matchList: () => ipcRenderer.invoke('match:list'),
-  matchConfirm: (matchIds: number[]) => ipcRenderer.invoke('match:confirm', matchIds),
+  // 匹配记录
+  matchRecords: {
+    getAll: (filters?: Record<string, string>) => ipcRenderer.invoke('db:matchRecords:getAll', filters),
+    insert: (data: Record<string, unknown>) => ipcRenderer.invoke('db:matchRecords:insert', data),
+    updateStatus: (id: number, status: string) => ipcRenderer.invoke('db:matchRecords:updateStatus', id, status)
+  },
 
   // 任务
-  taskList: () => ipcRenderer.invoke('task:list'),
-  taskStart: (taskIds: number[]) => ipcRenderer.invoke('task:start', taskIds),
-  taskRetry: (taskId: number) => ipcRenderer.invoke('task:retry', taskId),
-
-  // 设置
-  settingsGet: () => ipcRenderer.invoke('settings:get'),
-  settingsSave: (settings: Record<string, unknown>) => ipcRenderer.invoke('settings:save', settings),
+  tasks: {
+    getAll: (filters?: Record<string, string>) => ipcRenderer.invoke('db:tasks:getAll', filters),
+    getById: (id: number) => ipcRenderer.invoke('db:tasks:getById', id),
+    updateStatus: (id: number, status: string, extra?: Record<string, unknown>) => ipcRenderer.invoke('db:tasks:updateStatus', id, status, extra),
+    getRunning: () => ipcRenderer.invoke('db:tasks:getRunning'),
+    getQueued: (limit?: number) => ipcRenderer.invoke('db:tasks:getQueued', limit)
+  },
 
   // 匹配规则
-  rulesList: () => ipcRenderer.invoke('rules:list'),
-  rulesSave: (rule: Record<string, unknown>) => ipcRenderer.invoke('rules:save', rule),
+  matchRules: {
+    getAll: () => ipcRenderer.invoke('db:matchRules:getAll'),
+    insert: (rule: Record<string, unknown>) => ipcRenderer.invoke('db:matchRules:insert', rule),
+    updateEnabled: (id: number, enabled: boolean) => ipcRenderer.invoke('db:matchRules:updateEnabled', id, enabled),
+    delete: (id: number) => ipcRenderer.invoke('db:matchRules:delete', id)
+  },
+
+  // Bit浏览器
+  bit: {
+    healthCheck: () => ipcRenderer.invoke('bit:healthCheck'),
+    openBrowser: (profileId: string) => ipcRenderer.invoke('bit:openBrowser', profileId),
+    closeBrowser: (profileId: string) => ipcRenderer.invoke('bit:closeBrowser', profileId),
+    getActiveBrowsers: () => ipcRenderer.invoke('bit:getActiveBrowsers'),
+    getProfileList: (page?: number, pageSize?: number) => ipcRenderer.invoke('bit:getProfileList', page, pageSize)
+  },
+
+  // 设置
+  settings: {
+    get: () => ipcRenderer.invoke('settings:get'),
+    update: (key: string, value: unknown) => ipcRenderer.invoke('settings:update', key, value),
+    save: (settings: Record<string, unknown>) => ipcRenderer.invoke('settings:save', settings),
+    testBitConnection: () => ipcRenderer.invoke('settings:testBitConnection')
+  },
 
   // 统计
-  statsDashboard: () => ipcRenderer.invoke('stats:dashboard'),
+  stats: {
+    dashboard: () => ipcRenderer.invoke('db:stats:dashboard')
+  },
 
   // 事件监听
   onTaskProgress: (callback: (data: unknown) => void) => {
