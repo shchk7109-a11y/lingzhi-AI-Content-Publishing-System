@@ -82,6 +82,31 @@ const CONTENT_ANGLES = [
   },
 ];
 
+function getMatchingExample(
+  kb: ReturnType<typeof getKnowledgeBase>,
+  platform: string,
+  angleId: string
+): string {
+  const examples = (kb as any).examples || [];
+  if (examples.length === 0) return '';
+
+  // 精确匹配：平台 + 角度
+  const exact = examples.find((e: any) =>
+    e.platform === platform && e.content_type === angleId
+  );
+  if (exact) {
+    return `【参考范文 · ${exact.note || exact.content_type}】\n标题：${exact.title}\n\n${exact.content}`;
+  }
+
+  // 模糊匹配：同平台任意范文
+  const samePlatform = examples.find((e: any) => e.platform === platform);
+  if (samePlatform) {
+    return `【参考范文】\n标题：${samePlatform.title}\n\n${samePlatform.content}`;
+  }
+
+  return '';
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -185,7 +210,7 @@ export async function POST(request: Request) {
     // 6. 如果只生成单篇（angle_id 指定），直接返回单篇结果
     if (angle_id) {
       const angle = targetAngles[0];
-      const systemPrompt = systemPromptTemplate
+      let systemPrompt = systemPromptTemplate
         .replace(/\{\{brand_name\}\}/g, kb.brand.name)
         .replace(/\{\{ingredients\}\}/g, allIngredients)
         .replace(/\{\{pain_points\}\}/g, fullPersonaContext)
@@ -199,6 +224,11 @@ export async function POST(request: Request) {
         .replace(/\{\{founder_context\}\}/g, founderContext)
         .replace(/\{\{taste_keywords\}\}/g, tasteKeywords)
         + `\n\n**当前内容角度：${angle.label}**\n${angle.desc}`;
+
+      const dynamicExample = getMatchingExample(kb, platform, angle_id || '');
+      if (dynamicExample) {
+        systemPrompt = systemPrompt + '\n\n### 额外参考范文（来自范文库，学习风格不要抄内容）\n' + dynamicExample;
+      }
 
       const finalSystemPrompt = needsPromptJson
         ? systemPrompt + '\n\n**IMPORTANT: You MUST respond with valid JSON only. No markdown, no extra text. Output the raw JSON object directly.**'
@@ -230,7 +260,7 @@ export async function POST(request: Request) {
     // 7. 生成全部5篇（并发）
     const results = await Promise.allSettled(
       targetAngles.map(async (angle) => {
-        const systemPrompt = systemPromptTemplate
+        let systemPrompt = systemPromptTemplate
           .replace(/\{\{brand_name\}\}/g, kb.brand.name)
           .replace(/\{\{ingredients\}\}/g, allIngredients)
           .replace(/\{\{pain_points\}\}/g, fullPersonaContext)
@@ -244,6 +274,11 @@ export async function POST(request: Request) {
           .replace(/\{\{founder_context\}\}/g, founderContext)
           .replace(/\{\{taste_keywords\}\}/g, tasteKeywords)
           + `\n\n**当前内容角度：${angle.label}**\n${angle.desc}`;
+
+        const dynamicExample = getMatchingExample(kb, platform, angle.id);
+        if (dynamicExample) {
+          systemPrompt = systemPrompt + '\n\n### 额外参考范文（来自范文库，学习风格不要抄内容）\n' + dynamicExample;
+        }
 
         const finalSystemPrompt = needsPromptJson
           ? systemPrompt + '\n\n**IMPORTANT: You MUST respond with valid JSON only. No markdown, no extra text. Output the raw JSON object directly.**'
