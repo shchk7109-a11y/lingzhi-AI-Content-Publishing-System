@@ -139,6 +139,27 @@ function checkContentQuality(result: any, platform: string): QualityCheckResult 
       issues.push('缺少配图建议');
     }
 
+    // 检查招商/微商话术
+    const badPatterns = [
+      '万亿', '风口', '未来已来', '数字员工', '内容矩阵', '全网布局',
+      '选择比努力', '你看到了吗', '机遇', '降本增效', '赋能',
+      '评论区扣', '私我', '懂的来', '老规矩',
+      '宝子们', '家人们', '姐妹们',
+    ];
+    for (const pattern of badPatterns) {
+      if (content.includes(pattern)) {
+        issues.push(`包含禁用词汇「${pattern}」`);
+      }
+    }
+
+    // 检查标签是否生活化
+    const badTags = ['#AI赋能', '#降本增效', '#未来已来', '#数字员工', '#内容矩阵', '#事业格局', '#时代机遇'];
+    for (const tag of (result.tags || [])) {
+      if (badTags.some((bt: string) => tag.includes(bt.replace('#', '')))) {
+        issues.push(`标签「${tag}」不够生活化`);
+      }
+    }
+
   } else if (platform === 'video') {
     if (!result.hook) issues.push('缺少黄金3秒钩子');
     if (!result.scenes || result.scenes.length < 2) {
