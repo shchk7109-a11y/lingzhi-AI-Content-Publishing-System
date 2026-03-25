@@ -82,6 +82,32 @@ const CONTENT_ANGLES = [
   },
 ];
 
+/**
+ * 朋友圈专用内容角度（与 step-4-scripts.tsx 的 WECHAT_CONTENT_ANGLES 保持同步）
+ */
+const WECHAT_CONTENT_ANGLES = [
+  {
+    id: 'change',
+    label: '转变记录向',
+    desc: '记录从旧模式到新方式的变化，像随手写的日记。语气碎片化，用省略号和口语转折。不要公式化声明。',
+  },
+  {
+    id: 'taste',
+    label: '产品体验向',
+    desc: '到店或外卖的真实饮用感受，强调口感和身体变化。要有比喻和感官描述。消费场景必须是到店或外卖。',
+  },
+  {
+    id: 'discovery',
+    label: '小发现向',
+    desc: '用一个具体的小事件展示价值，不喊口号。用"今天发现一个有意思的事"切入，语气像写日记。',
+  },
+  {
+    id: 'feedback',
+    label: '客户反馈向',
+    desc: '转述客户的真实反应，用第三方的嘴说产品好。语气像跟朋友分享一个小故事。',
+  },
+];
+
 interface QualityCheckResult {
   passed: boolean;
   issues: string[];
@@ -277,10 +303,11 @@ export async function POST(request: Request) {
       : '（当前平台不使用创始人信息）';
 
     // 4. 确定内容角度
-    // 如果传入了 angle_id，使用指定角度；否则生成全部5篇
+    // 根据平台选择角度数组：朋友圈使用专用4角度，其他平台使用通用5角度
+    const angleSource = platform === 'wechat' ? WECHAT_CONTENT_ANGLES : CONTENT_ANGLES;
     const targetAngles = angle_id
-      ? CONTENT_ANGLES.filter(a => a.id === angle_id)
-      : CONTENT_ANGLES;
+      ? angleSource.filter(a => a.id === angle_id)
+      : angleSource;
 
     if (targetAngles.length === 0) {
       return NextResponse.json(
@@ -322,6 +349,7 @@ export async function POST(request: Request) {
         .replace(/\{\{topic\}\}/g, topic)
         .replace(/\{\{founder_context\}\}/g, founderContext)
         .replace(/\{\{taste_keywords\}\}/g, tasteKeywords)
+        .replace(/\{\{angle_description\}\}/g, angle.desc || '')
         + `\n\n**当前内容角度：${angle.label}**\n${angle.desc}`;
 
       const dynamicExample = getMatchingExample(kb, platform, angle_id || '');
@@ -414,6 +442,7 @@ export async function POST(request: Request) {
           .replace(/\{\{topic\}\}/g, topic)
           .replace(/\{\{founder_context\}\}/g, founderContext)
           .replace(/\{\{taste_keywords\}\}/g, tasteKeywords)
+          .replace(/\{\{angle_description\}\}/g, angle.desc || '')
           + `\n\n**当前内容角度：${angle.label}**\n${angle.desc}`;
 
         const dynamicExample = getMatchingExample(kb, platform, angle.id);
