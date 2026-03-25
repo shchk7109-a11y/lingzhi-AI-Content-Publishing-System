@@ -26,6 +26,7 @@ interface Step2MatrixProps {
   pillars: PillarItem[] | string[]
   mode?: "brand" | "product"
   productId?: string
+  category?: string
   onConfirm: (matrix: MatrixRow[]) => void
   onBack: () => void
 }
@@ -74,7 +75,7 @@ const COL_CONFIG = [
 
 const PILLAR_COLORS = ["#2D5A27", "#E8820A", "#3B4FA8"]
 
-export function Step2Matrix({ pillars, mode, productId, onConfirm, onBack }: Step2MatrixProps) {
+export function Step2Matrix({ pillars, mode, productId, category, onConfirm, onBack }: Step2MatrixProps) {
   const [matrix, setMatrix] = React.useState<MatrixRow[]>([])
   const [isLoading, setIsLoading] = React.useState<boolean>(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -90,7 +91,7 @@ export function Step2Matrix({ pillars, mode, productId, onConfirm, onBack }: Ste
       const response = await fetchWithAIConfig("/api/generate/matrix", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pillars: pillarsPayload, mode, productId }),
+        body: JSON.stringify({ pillars: pillarsPayload, mode, productId, category }),
       })
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}))

@@ -163,6 +163,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { matrix, platform = 'video' } = body;
+    const topicsPerIdea = Math.min(Math.max(body.topicsPerIdea || 2, 1), 3); // 1-3，默认2
 
     if (!matrix || !Array.isArray(matrix) || matrix.length === 0) {
       return NextResponse.json(
@@ -194,9 +195,10 @@ export async function POST(request: Request) {
       .replace(/\{\{ingredients\}\}/g, ingredientsContext)
       .replace(/\{\{taste_advantage\}\}/g, tasteAdvantageContext);
 
-    const quantityInstruction = platform === 'video' 
-        ? "Generate 3 video titles/hooks per cell." 
-        : "Generate **5 distinct titles/copy angles** per cell. Keep them concise but catchy.";
+    const totalPerCell = topicsPerIdea * 2; // 每格2个创意 × 每个创意N个选题
+    const quantityInstruction = platform === 'video'
+        ? `Generate ${totalPerCell} video titles/hooks per cell.`
+        : `Generate ${totalPerCell} distinct titles/copy angles per cell. Keep them concise but catchy.`;
 
     // Build System Prompt — inject taste_advantage into topics_system as well
     let systemPrompt = prompts.topics_system
@@ -248,8 +250,12 @@ export async function POST(request: Request) {
           `「${row.pillar}」→ 增长策略：${row.growth?.title || ''} | 知识策略：${row.knowledge?.title || ''} | 权威策略：${row.authority?.title || ''}`
         ).join('\n');
 
-        // 填充 system prompt
+        // 填充 system prompt（动态数量替换）
+        const xhsPerCategory = topicsPerIdea * 2; // 每类数量 = 每个创意N个 × 2个创意
+        const xhsTotalPerPillar = xhsPerCategory * 4; // 4类 × 每类数量
         systemPrompt = xhsSystemTemplate
+          .replace(/每类 3 个/g, `每类 ${xhsPerCategory} 个`)
+          .replace(/共 12 个\/支柱/g, `共 ${xhsTotalPerPillar} 个/支柱`)
           .replace(/\{\{season_context\}\}/g, getSeasonContext())
           .replace(/\{\{scene_context\}\}/g, getSceneContext())
           .replace(/\{\{product_matrix\}\}/g, productMatrix)

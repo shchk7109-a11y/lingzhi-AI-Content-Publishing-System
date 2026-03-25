@@ -26,11 +26,13 @@ export default function Home() {
   const [matrix, setMatrix] = React.useState<MatrixRow[]>([])
   const [topics, setTopics] = React.useState<TopicWithContext[]>([])
   const [selectedPlatform, setSelectedPlatform] = React.useState<Platform>("video")
+  const [selectedCategory, setSelectedCategory] = React.useState<string>('brand')
 
-  const handlePillarsConfirmed = (newPillars: PillarItem[], mode?: string, productId?: string) => {
+  const handlePillarsConfirmed = (newPillars: PillarItem[], mode?: string, productId?: string, category?: string) => {
     setPillars(newPillars)
     setPillarMode(mode || 'brand')
     setPillarProductId(productId || '')
+    setSelectedCategory(category || 'brand')
     setCurrentStep(2)
   }
   const handleMatrixConfirmed = (newMatrix: MatrixRow[]) => {
@@ -48,6 +50,7 @@ export default function Home() {
     setPillars([])
     setPillarMode('brand')
     setPillarProductId('')
+    setSelectedCategory('brand')
     setMatrix([])
     setTopics([])
     setSelectedPlatform("video")
@@ -211,7 +214,7 @@ export default function Home() {
         <div className="animate-fade-in-up">
           {currentStep === 1 && <Step1Pillars onConfirm={handlePillarsConfirmed} />}
           {currentStep === 2 && (
-            <Step2Matrix pillars={pillars} mode={pillarMode as any} productId={pillarProductId} onConfirm={handleMatrixConfirmed} onBack={handleBack} />
+            <Step2Matrix pillars={pillars} mode={pillarMode as any} productId={pillarProductId} category={selectedCategory} onConfirm={handleMatrixConfirmed} onBack={handleBack} />
           )}
           {currentStep === 3 && (
             <Step3Topics matrix={matrix} onConfirm={handleTopicsConfirmed} onBack={handleBack} />

@@ -41,9 +41,13 @@ export async function POST(request: Request) {
 品牌愿景：${kb.brand.vision}
 核心价值观：${kb.brand.core_values.join('、')}`;
 
-    const founderAuthority = `创始人：${kb.founder.name}
-核心背书：25年一直致力于液态灵芝产业化，是第四代灵芝的倡导者。
-背景：${kb.founder.background}`;
+    // 只有"养生科普"类别才注入完整创始人背书
+    // 其他种草类别（品牌整体、草本茶饮、草本咖啡、探店打卡、生活方式）不注入
+    const shouldInjectFounder = category === 'health';
+
+    const founderAuthority = shouldInjectFounder
+      ? `创始人：${kb.founder.name}\n核心背书：25年液态灵芝产业化专家。\n背景：${kb.founder.background}`
+      : '（当前为种草内容方向，不使用创始人背书，聚焦产品体验和用户痛点）';
 
     // ==========================================
     // 2. 构建【产品/品牌上下文】（根据模式不同）
@@ -100,7 +104,7 @@ ${kb.products.map(p => `- ${p.name}：${p.function}`).join('\n')}${tasteContext}
     // 3. 填充提示词占位符
     // ==========================================
     const systemPrompt = prompts.pillars_system;
-    const userPrompt = (prompts.pillars_user || '')
+    let userPrompt = (prompts.pillars_user || '')
       .replace('{{mode}}', mode === 'brand' ? '品牌整体策略' : '单品推广策略')
       .replace('{{brand_context}}', brandContext)
       .replace('{{founder_authority}}', founderAuthority)
@@ -108,6 +112,15 @@ ${kb.products.map(p => `- ${p.name}：${p.function}`).join('\n')}${tasteContext}
       .replace('{{ingredients}}', ingredientsContext)
       .replace('{{target_audience}}', targetAudienceContext)
       .replace('{{category}}', categoryDesc);
+
+    if (category !== 'health') {
+      userPrompt += `\n\n**【种草阶段约束 — 必须遵守】**
+❌ 禁止生成与创始人个人经历相关的支柱（如"25年深耕"、"第四代灵芝"、"亿元退出"）
+❌ 禁止生成过于宏大的品牌叙事支柱（如"产业革命"、"技术突破"）
+✅ 支柱必须从用户视角出发：用户的痛点是什么？用户喝完有什么感受？用户的生活场景是什么？
+✅ 好的种草支柱示例：「奶茶替代计划」「下午三点的续命水」「不苦的养生新方式」「告别早起水肿脸」
+❌ 不好的支柱示例：「25载深耕的第四代灵芝」「液态发酵技术革命」「创始人的灵芝梦」`;
+    }
 
     // ==========================================
     // 3.5 注入创意种子，避免每次生成相同的支柱

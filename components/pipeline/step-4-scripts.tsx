@@ -650,7 +650,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
               }}
             >
               <ArrowLeft className="w-3 h-3" />
-              返回
+              返回选题
             </button>
             {onRestart && (
               <button
@@ -666,7 +666,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v5h5" />
                 </svg>
-                重新开始
+                返回首页
               </button>
             )}
           </div>
