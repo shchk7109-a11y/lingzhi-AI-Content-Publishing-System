@@ -103,6 +103,46 @@ const CONTENT_ANGLES = [
   },
 ]
 
+// 朋友圈专用内容角度
+const WECHAT_CONTENT_ANGLES = [
+  {
+    id: 'change',
+    label: '转变记录',
+    icon: '🔄',
+    desc: '记录从旧模式到新方式的变化，像随手写的日记，让朋友感受到你的改变',
+    color: '#2D5A27',
+    bg: '#EBF5E9',
+    border: 'rgba(45,90,39,0.2)',
+  },
+  {
+    id: 'taste',
+    label: '产品体验',
+    icon: '☕',
+    desc: '到店或外卖的真实饮用感受，强调口感和身体变化，像跟朋友聊天',
+    color: '#B85C00',
+    bg: '#FFF8E7',
+    border: 'rgba(184,92,0,0.2)',
+  },
+  {
+    id: 'discovery',
+    label: '小发现',
+    icon: '💡',
+    desc: '一个具体小事件引发的感悟，用"今天发现一个有意思的事"切入',
+    color: '#3B4FA8',
+    bg: '#EBF0FF',
+    border: 'rgba(59,79,168,0.2)',
+  },
+  {
+    id: 'feedback',
+    label: '客户反馈',
+    icon: '💬',
+    desc: '转述客户的真实反应，用第三方的嘴说产品好，比自己说有效10倍',
+    color: '#7C3D8A',
+    bg: '#F5EEFF',
+    border: 'rgba(124,61,138,0.2)',
+  },
+];
+
 // ─── 智能角度推荐 ────────────────────────────────────────────────────────────────
 //
 // 根据选题文本关键词推断最匹配的内容角度。
@@ -136,13 +176,21 @@ const ANGLE_KEYWORDS: Record<string, string[]> = {
   ],
 }
 
+// 朋友圈角度关键词
+const WECHAT_ANGLE_KEYWORDS: Record<string, string[]> = {
+  change: ['改变', '转变', '以前', '现在', '不再', '告别', '过去', '囤货', '推销', '决定'],
+  taste: ['好喝', '口感', '味道', '回甘', '不苦', '顺滑', '体验', '试了', '第一口'],
+  discovery: ['发现', '有意思', '现象', '感悟', '想到', '原来', '才知道'],
+  feedback: ['客户', '顾客', '回来', '反馈', '说', '评价', '复购', '推荐给'],
+};
+
 /**
  * 根据选题文本推断最匹配的内容角度 ID。
  * 计算每个角度的关键词命中数，取最高分；若平局则按角度顺序取第一个。
  */
-function inferAngle(topic: string): string {
+function inferAngle(topic: string, keywordsMap: Record<string, string[]> = ANGLE_KEYWORDS): string {
   const scores: Record<string, number> = {}
-  for (const [angleId, keywords] of Object.entries(ANGLE_KEYWORDS)) {
+  for (const [angleId, keywords] of Object.entries(keywordsMap)) {
     scores[angleId] = keywords.filter((kw) => topic.includes(kw)).length
   }
   const best = Object.entries(scores).sort((a, b) => b[1] - a[1])[0]
@@ -155,16 +203,16 @@ function inferAngle(topic: string): string {
  * 1. 先用关键词推断每个选题的最佳角度
  * 2. 对无法推断的选题，按照「已分配角度的使用频次」补充，保证尽量均匀
  */
-function assignAngles(topics: string[]): Record<string, string> {
-  const angleIds = CONTENT_ANGLES.map((a) => a.id)
+function assignAngles(topics: string[], angles: typeof CONTENT_ANGLES = CONTENT_ANGLES, keywordsMap: Record<string, string[]> = ANGLE_KEYWORDS): Record<string, string> {
+  const angleIds = angles.map((a) => a.id)
   const result: Record<string, string> = {}
   const usageCount: Record<string, number> = Object.fromEntries(angleIds.map((id) => [id, 0]))
 
   // 第一轮：关键词推断
   const unassigned: string[] = []
   for (const topic of topics) {
-    const inferred = inferAngle(topic)
-    if (inferred) {
+    const inferred = inferAngle(topic, keywordsMap)
+    if (inferred && angleIds.includes(inferred)) {
       result[topic] = inferred
       usageCount[inferred]++
     } else {
@@ -212,6 +260,10 @@ async function runWithConcurrencyLimit<T>(
 // ─── 主组件 ──────────────────────────────────────────────────────────────────
 
 export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4ScriptsProps) {
+  // 根据平台选择对应的角度列表和关键词
+  const activeAngles = platform === 'wechat' ? WECHAT_CONTENT_ANGLES : CONTENT_ANGLES;
+  const activeKeywords = platform === 'wechat' ? WECHAT_ANGLE_KEYWORDS : ANGLE_KEYWORDS;
+
   // 从 TopicWithContext[] 中提取纯标题字符串列表（兼容现有逻辑）
   const topicStrings = topics.map(t => t.topic);
   // 根据标题字符串查找完整上下文
@@ -236,13 +288,13 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
       // 找出尚未分配角度的选题
       const newTopics = topicStrings.filter((t) => !prev[t])
       if (newTopics.length === 0) return prev
-      const smartAssigned = assignAngles(newTopics)
+      const smartAssigned = assignAngles(newTopics, activeAngles, activeKeywords)
       return { ...prev, ...smartAssigned }
     })
   }, [topics])
 
   // 当前 topic 选中的角度 id
-  const activeAngleId = selectedAngles[activeTopic] || CONTENT_ANGLES[0].id
+  const activeAngleId = selectedAngles[activeTopic] || activeAngles[0].id
   // 当前展示的 item key
   const activeKey = `${activeTopic}__${activeAngleId}`
   const activeItem = items[activeKey]
@@ -277,7 +329,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
       }
       const data = await response.json()
       // 生成完成后自动保存到资产库
-      const angle = CONTENT_ANGLES.find((a) => a.id === angle_id) || CONTENT_ANGLES[0]
+      const angle = activeAngles.find((a) => a.id === angle_id) || activeAngles[0]
       saveContentAsset({
         topic,
         platform,
@@ -311,7 +363,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
   const handleGenerateAll = async () => {
     setIsGeneratingAll(true)
     const topicsToGenerate = topicStrings.filter((t) => {
-      const angleId = selectedAngles[t] || CONTENT_ANGLES[0].id
+      const angleId = selectedAngles[t] || activeAngles[0].id
       const key = `${t}__${angleId}`
       return items[key]?.status !== "completed"
     })
@@ -322,7 +374,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
     }
     toast.info(`开始并行生成 ${topicsToGenerate.length} 条内容...`)
     const tasks = topicsToGenerate.map(
-      (topic) => () => generateContent(topic, selectedAngles[topic] || CONTENT_ANGLES[0].id)
+      (topic) => () => generateContent(topic, selectedAngles[topic] || activeAngles[0].id)
     )
     try {
       await runWithConcurrencyLimit(tasks, CONCURRENCY_LIMIT)
@@ -389,7 +441,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
       const rows: any[] = []
       let rowNum = 1
       topicStrings.forEach((t) => {
-        CONTENT_ANGLES.forEach((angle) => {
+        activeAngles.forEach((angle) => {
           const key = `${t}__${angle.id}`
           const item = items[key]
           // 清洗：只导出已生成且有正文内容的条目
@@ -434,11 +486,11 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
   // ── 统计 ──────────────────────────────────────────────────────────────────
 
   const completedCount = topicStrings.filter((t) => {
-    const angleId = selectedAngles[t] || CONTENT_ANGLES[0].id
+    const angleId = selectedAngles[t] || activeAngles[0].id
     return items[`${t}__${angleId}`]?.status === "completed"
   }).length
 
-  const activeAngle = CONTENT_ANGLES.find((a) => a.id === activeAngleId) || CONTENT_ANGLES[0]
+  const activeAngle = activeAngles.find((a) => a.id === activeAngleId) || activeAngles[0]
 
   // ── 渲染 ──────────────────────────────────────────────────────────────────
 
@@ -556,11 +608,11 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
           {/* 选题列表 */}
           <div className="overflow-y-auto" style={{ maxHeight: "520px" }}>
             {topicStrings.map((topic, idx) => {
-              const angleId = selectedAngles[topic] || CONTENT_ANGLES[0].id
+              const angleId = selectedAngles[topic] || activeAngles[0].id
               const key = `${topic}__${angleId}`
               const item = items[key]
               const isActive = topic === activeTopic
-              const angle = CONTENT_ANGLES.find((a) => a.id === angleId)
+              const angle = activeAngles.find((a) => a.id === angleId)
 
               return (
                 <div
@@ -705,7 +757,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
           >
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-bold" style={{ color: "#5C3D1E" }}>
-                选择内容角度（5选1）
+                选择内容角度（{activeAngles.length}选1）
               </p>
               <span
                 className="text-xs px-2 py-0.5 rounded-full font-medium"
@@ -714,16 +766,16 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
                 ✨ AI 已智能推荐，可手动修改
               </span>
             </div>
-            <div className="grid grid-cols-5 gap-2">
-              {CONTENT_ANGLES.map((angle) => {
+            <div className={`grid gap-2 ${activeAngles.length <= 4 ? 'grid-cols-4' : 'grid-cols-5'}`}>
+              {activeAngles.map((angle) => {
                 const isSelected = activeAngleId === angle.id
                 const key = `${activeTopic}__${angle.id}`
                 const item = items[key]
                 const isDone = item?.status === "completed"
 
                 // 判断该角度是否是当前选题的 AI 推荐角度
-                const isRecommended = inferAngle(activeTopic) === angle.id ||
-                  (!inferAngle(activeTopic) && assignAngles([activeTopic])[activeTopic] === angle.id)
+                const isRecommended = inferAngle(activeTopic, activeKeywords) === angle.id ||
+                  (!inferAngle(activeTopic, activeKeywords) && assignAngles([activeTopic], activeAngles, activeKeywords)[activeTopic] === angle.id)
 
                 return (
                   <button
@@ -1035,7 +1087,7 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
                     切换其他角度继续生成：
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    {CONTENT_ANGLES.filter((a) => a.id !== activeAngleId).map((angle) => {
+                    {activeAngles.filter((a) => a.id !== activeAngleId).map((angle) => {
                       const key = `${activeTopic}__${angle.id}`
                       const item = items[key]
                       const isDone = item?.status === "completed"
