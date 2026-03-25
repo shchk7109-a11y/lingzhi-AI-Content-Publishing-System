@@ -71,6 +71,7 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
     video: false,
   })
   const [error, setError] = React.useState<string | null>(null)
+  const [topicsPerIdea, setTopicsPerIdea] = React.useState<number>(2)
   const [topicContextMap, setTopicContextMap] = React.useState<Map<string, {pillar_name: string, content_type: string, strategy_explanation: string}>>(new Map())
 
   const handleGenerate = async (platform: Platform) => {
@@ -80,7 +81,7 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
       const response = await fetchWithAIConfig("/api/generate/topics", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ matrix, platform }),
+        body: JSON.stringify({ matrix, platform, topicsPerIdea }),
       })
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}))
@@ -310,6 +311,29 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
               )}
             </div>
             <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs" style={{ color: "#5C3D1E" }}>每个创意</span>
+                <select
+                  value={topicsPerIdea}
+                  onChange={(e) => setTopicsPerIdea(Number(e.target.value))}
+                  className="h-8 px-2 rounded-lg text-xs"
+                  style={{
+                    border: "1.5px solid rgba(45,90,39,0.2)",
+                    background: "white",
+                    color: "#2D5A27",
+                  }}
+                >
+                  <option value={1}>1个选题</option>
+                  <option value={2}>2个选题</option>
+                  <option value={3}>3个选题</option>
+                </select>
+                <span className="text-xs" style={{ color: "rgba(45,90,39,0.5)" }}>
+                  共约{currentPlatform === 'xiaohongshu'
+                    ? matrix.length * 4 * 2 * topicsPerIdea
+                    : matrix.length * 3 * 2 * topicsPerIdea
+                  }个
+                </span>
+              </div>
               {currentTopics.length > 0 && (
                 <button
                   onClick={handleExportCSV}

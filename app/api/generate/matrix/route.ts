@@ -13,6 +13,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { pillars, mode = 'brand', productId } = body;
+    const category = body.category || 'brand';
 
     if (!pillars || !Array.isArray(pillars) || pillars.length !== 3) {
       return NextResponse.json(
@@ -32,9 +33,10 @@ export async function POST(request: Request) {
 品牌愿景：${kb.brand.vision}
 核心价值观：${kb.brand.core_values.join('、')}`;
 
-    const founderAuthority = `创始人：${kb.founder.name}
-核心背书：25年一直致力于液态灵芝产业化，是第四代灵芝的倡导者。
-背景：${kb.founder.background}`;
+    const shouldInjectFounder = category === 'health';
+    const founderAuthority = shouldInjectFounder
+      ? `创始人：${kb.founder.name}\n核心背书：25年液态灵芝产业化专家。\n背景：${kb.founder.background}`
+      : '（种草阶段不使用创始人信息）';
 
     // ==========================================
     // 2. 构建【产品/品牌上下文】（根据模式不同）
@@ -118,9 +120,19 @@ ${kb.products.map(p => `- ${p.name}：${p.function}`).join('\n')}`;
     const jsonUnsupported = isJsonFormatUnsupported(modelName, provider);
     const needsPromptJson = reasoning || jsonUnsupported;
 
-    const finalSystemPrompt = needsPromptJson
-      ? systemPrompt + '\n\n**IMPORTANT: You MUST respond with valid JSON only. No markdown, no extra text. Output the raw JSON object directly.**'
-      : systemPrompt;
+    let finalSystemPrompt = systemPrompt;
+
+    if (category !== 'health') {
+      finalSystemPrompt += `\n\n**【种草阶段约束】**
+❌ 九宫格策略中禁止出现创始人个人故事、创始人语录、创始人出镜类内容
+❌ 禁止出现"25年"、"第四代灵芝"、"亿元退出"等创始人相关表述
+✅ 所有策略必须从用户视角和产品体验出发
+✅ 权威内容应该通过成分科学解释、用户真实反馈、专业检测数据来建立，而非创始人个人背书`;
+    }
+
+    if (needsPromptJson) {
+      finalSystemPrompt += '\n\n**IMPORTANT: You MUST respond with valid JSON only. No markdown, no extra text. Output the raw JSON object directly.**';
+    }
 
     const completionParams: any = {
       model: modelName,
