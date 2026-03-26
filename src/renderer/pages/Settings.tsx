@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Col, Form, Input, InputNumber, Row, Switch, Select, Typography, message, Tag } from 'antd'
+import { Button, Card, Col, Form, Input, InputNumber, Row, Switch, Select, Space, Typography, message, Tag } from 'antd'
 import { SaveOutlined, ApiOutlined, CheckCircleFilled, CloseCircleFilled } from '@ant-design/icons'
 
 const { Title } = Typography
@@ -26,11 +26,21 @@ function Settings(): JSX.Element {
   const handleSave = async (): Promise<void> => {
     setLoading(true)
     try {
-      const values = await form.validateFields()
+      // 用 getFieldsValue 获取值，不触发全量校验
+      const values = form.getFieldsValue()
+
+      // 仅校验必填字段
+      if (!values.bitApiPort) {
+        message.warning('请填写API端口')
+        setLoading(false)
+        return
+      }
+
       await window.api.settings.save(values)
       message.success('设置已保存')
-    } catch {
-      message.error('保存失败')
+    } catch (error) {
+      console.error('Save settings error:', error)
+      message.error('保存失败: ' + (error instanceof Error ? error.message : '未知错误'))
     }
     setLoading(false)
   }
@@ -79,7 +89,7 @@ function Settings(): JSX.Element {
                 bitConnected === false ? <Tag icon={<CloseCircleFilled />} color="error">未连接</Tag> : null
               }
             >
-              <Form.Item label="API端口" name="bitApiPort" rules={[{ required: true }]}>
+              <Form.Item label="API端口" name="bitApiPort">
                 <InputNumber min={1} max={65535} style={{ width: '100%' }} placeholder="54345" />
               </Form.Item>
               <Form.Item label="API Token" name="bitApiToken">
@@ -100,7 +110,7 @@ function Settings(): JSX.Element {
 
             <Card title="发布参数" size="small" style={{ marginBottom: 16 }}>
               <Form.Item label="发布时间段">
-                <Input.Group compact>
+                <Space.Compact style={{ width: '100%' }}>
                   <Form.Item name="publishTimeStart" noStyle>
                     <Input style={{ width: '45%' }} placeholder="09:00" />
                   </Form.Item>
@@ -108,7 +118,7 @@ function Settings(): JSX.Element {
                   <Form.Item name="publishTimeEnd" noStyle>
                     <Input style={{ width: '45%' }} placeholder="22:00" />
                   </Form.Item>
-                </Input.Group>
+                </Space.Compact>
               </Form.Item>
               <Form.Item label="最小发布间隔(ms)" name="publishIntervalMs">
                 <InputNumber min={10000} step={5000} style={{ width: '100%' }} />
@@ -121,8 +131,8 @@ function Settings(): JSX.Element {
 
           <Col span={12}>
             <Card title="代理配置" size="small" style={{ marginBottom: 16 }}>
-              <Form.Item label="代理供应商">
-                <Select placeholder="选择代理供应商" options={[
+              <Form.Item label="代理供应商" name="proxyProvider">
+                <Select placeholder="选择代理供应商" allowClear options={[
                   { value: 'custom', label: '自定义代理' },
                   { value: 'luminati', label: 'Bright Data' },
                   { value: 'smartproxy', label: 'SmartProxy' },
@@ -144,8 +154,8 @@ function Settings(): JSX.Element {
               <Form.Item label="错误时截图" name="screenshotOnError" valuePropName="checked">
                 <Switch />
               </Form.Item>
-              <Form.Item label="日志级别">
-                <Select defaultValue="info" options={[
+              <Form.Item label="日志级别" name="logLevel">
+                <Select options={[
                   { value: 'debug', label: 'Debug' },
                   { value: 'info', label: 'Info' },
                   { value: 'warn', label: 'Warning' },
