@@ -28,6 +28,15 @@ export function getWindowPool(): WindowPool {
   return windowPool
 }
 
+function syncBitSettings(settings: Record<string, unknown>): void {
+  if (settings.bitApiPort !== undefined && typeof settings.bitApiPort === 'number') {
+    bitManager.updatePort(settings.bitApiPort)
+  }
+  if (settings.bitApiToken !== undefined && typeof settings.bitApiToken === 'string') {
+    bitManager.updateApiToken(settings.bitApiToken)
+  }
+}
+
 export function registerIpcHandlers(): void {
   // ===== 内容池操作 =====
   ipcMain.handle('db:content:getAll', (_event, filters?: Record<string, string>) => {
@@ -199,22 +208,13 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('settings:update', (_event, key: string, value: unknown) => {
     ;(currentSettings as Record<string, unknown>)[key] = value
-
-    // 如果更新了Bit端口，同步到BitBrowserManager
-    if (key === 'bitApiPort' && typeof value === 'number') {
-      bitManager.updatePort(value)
-    }
-
+    syncBitSettings({ [key]: value })
     return { success: true }
   })
 
   ipcMain.handle('settings:save', (_event, settings: Record<string, unknown>) => {
     currentSettings = { ...currentSettings, ...settings } as SystemSettings
-
-    if (settings.bitApiPort && typeof settings.bitApiPort === 'number') {
-      bitManager.updatePort(settings.bitApiPort)
-    }
-
+    syncBitSettings(settings)
     return { success: true }
   })
 

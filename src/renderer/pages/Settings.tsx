@@ -39,17 +39,17 @@ function Settings(): JSX.Element {
     setTestingConnection(true)
     setBitConnected(null)
     try {
-      // 先保存端口设置
+      // 先保存Bit相关配置再测试
       const port = form.getFieldValue('bitApiPort')
-      if (port) {
-        await window.api.settings.update('bitApiPort', port)
-      }
+      const token = form.getFieldValue('bitApiToken')
+      if (port) await window.api.settings.update('bitApiPort', port)
+      if (token !== undefined) await window.api.settings.update('bitApiToken', token || '')
       const result = await window.api.settings.testBitConnection()
       setBitConnected(result)
       if (result) {
         message.success('Bit浏览器连接成功')
       } else {
-        message.warning('Bit浏览器未运行或端口不正确')
+        message.warning('Bit浏览器未运行或端口/Token不正确')
       }
     } catch {
       setBitConnected(false)
@@ -81,6 +81,9 @@ function Settings(): JSX.Element {
             >
               <Form.Item label="API端口" name="bitApiPort" rules={[{ required: true }]}>
                 <InputNumber min={1} max={65535} style={{ width: '100%' }} placeholder="54345" />
+              </Form.Item>
+              <Form.Item label="API Token" name="bitApiToken">
+                <Input.Password placeholder="Bit浏览器API鉴权Token" />
               </Form.Item>
               <Form.Item label="最大并发窗口数" name="maxConcurrency">
                 <InputNumber min={1} max={10} style={{ width: '100%' }} placeholder="5" />

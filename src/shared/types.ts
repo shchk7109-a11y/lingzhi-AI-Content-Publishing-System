@@ -133,6 +133,7 @@ export interface BitBrowserWindow {
 export interface SystemSettings {
   bitApiUrl: string
   bitApiPort: number
+  bitApiToken: string
   maxConcurrency: number
   defaultProxy: ProxyConfig | null
   warmupEnabled: boolean

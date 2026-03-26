@@ -20,12 +20,14 @@ interface BitBrowserActive {
  */
 export class BitBrowserManager {
   private baseUrl: string
+  private apiToken: string
   private wsEndpoints: Map<string, string> = new Map()
   private readonly requestTimeoutMs = 10000
 
-  constructor(port?: number) {
+  constructor(port?: number, apiToken?: string) {
     const p = port || DEFAULT_SETTINGS.bitApiPort
     this.baseUrl = `http://127.0.0.1:${p}`
+    this.apiToken = apiToken || ''
   }
 
   /**
@@ -33,6 +35,13 @@ export class BitBrowserManager {
    */
   updatePort(port: number): void {
     this.baseUrl = `http://127.0.0.1:${port}`
+  }
+
+  /**
+   * 更新API Token（Settings联动）
+   */
+  updateApiToken(token: string): void {
+    this.apiToken = token
   }
 
   /**
@@ -201,10 +210,15 @@ export class BitBrowserManager {
 
     try {
       const url = `${this.baseUrl}${path}`
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (this.apiToken) {
+        headers['X-API-KEY'] = this.apiToken
+      }
+
       const options: RequestInit = {
         method,
         signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' }
+        headers
       }
 
       if (body && method !== 'GET') {
