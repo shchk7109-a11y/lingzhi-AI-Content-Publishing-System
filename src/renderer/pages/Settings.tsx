@@ -17,30 +17,35 @@ function Settings(): JSX.Element {
   const loadSettings = async (): Promise<void> => {
     try {
       const data = await window.api.settings.get()
-      form.setFieldsValue(data)
-    } catch {
-      // API未就绪
+      if (data) {
+        form.setFieldsValue(data)
+      }
+    } catch (err) {
+      console.error('[Settings] loadSettings error:', err)
     }
   }
 
   const handleSave = async (): Promise<void> => {
     setLoading(true)
     try {
-      // 用 getFieldsValue 获取值，不触发全量校验
-      const values = form.getFieldsValue()
+      const raw = form.getFieldsValue()
 
-      // 仅校验必填字段
-      if (!values.bitApiPort) {
-        message.warning('请填写API端口')
-        setLoading(false)
-        return
+      // 清理undefined值，IPC不能序列化undefined
+      const values: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(raw)) {
+        if (v !== undefined) {
+          values[k] = v
+        }
       }
 
-      await window.api.settings.save(values)
+      console.log('[Settings] Saving:', JSON.stringify(values))
+      const result = await window.api.settings.save(values)
+      console.log('[Settings] Save result:', result)
       message.success('设置已保存')
     } catch (error) {
-      console.error('Save settings error:', error)
-      message.error('保存失败: ' + (error instanceof Error ? error.message : '未知错误'))
+      const msg = error instanceof Error ? error.message : String(error)
+      console.error('[Settings] Save error:', msg)
+      message.error('保存失败: ' + msg)
     }
     setLoading(false)
   }
@@ -49,21 +54,30 @@ function Settings(): JSX.Element {
     setTestingConnection(true)
     setBitConnected(null)
     try {
-      // 先保存Bit相关配置再测试
+      // 先同步端口和Token到主进程
       const port = form.getFieldValue('bitApiPort')
       const token = form.getFieldValue('bitApiToken')
-      if (port) await window.api.settings.update('bitApiPort', port)
-      if (token !== undefined) await window.api.settings.update('bitApiToken', token || '')
+
+      console.log('[Settings] Testing connection, port:', port, 'token:', token ? '***' : '(empty)')
+
+      if (port) {
+        await window.api.settings.update('bitApiPort', Number(port))
+      }
+      await window.api.settings.update('bitApiToken', token || '')
+
       const result = await window.api.settings.testBitConnection()
-      setBitConnected(result)
-      if (result) {
+      console.log('[Settings] Test result:', result)
+      setBitConnected(result === true)
+
+      if (result === true) {
         message.success('Bit浏览器连接成功')
       } else {
         message.warning('Bit浏览器未运行或端口/Token不正确')
       }
-    } catch {
+    } catch (err) {
+      console.error('[Settings] Test connection error:', err)
       setBitConnected(false)
-      message.error('连接失败，请检查Bit浏览器是否已启动')
+      message.error('连接失败: ' + (err instanceof Error ? err.message : String(err)))
     }
     setTestingConnection(false)
   }
@@ -114,7 +128,7 @@ function Settings(): JSX.Element {
                   <Form.Item name="publishTimeStart" noStyle>
                     <Input style={{ width: '45%' }} placeholder="09:00" />
                   </Form.Item>
-                  <Input style={{ width: '10%', textAlign: 'center', pointerEvents: 'none' }} placeholder="~" disabled />
+                  <Input style={{ width: '10%', textAlign: 'center' }} placeholder="~" disabled />
                   <Form.Item name="publishTimeEnd" noStyle>
                     <Input style={{ width: '45%' }} placeholder="22:00" />
                   </Form.Item>

@@ -46,11 +46,13 @@ export class BitBrowserManager {
 
   /**
    * 检查Bit浏览器服务是否运行
+   * 用轻量的 browser/list 请求代替 GET /（Bit可能不支持根路径）
    */
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await this.request('GET', '/')
-      return response !== null
+      const data = await this.request('POST', '/browser/list', { page: 0, pageSize: 1 })
+      // 只要返回了数据（无论列表是否为空），说明API可达且鉴权通过
+      return data !== null && typeof data === 'object'
     } catch {
       return false
     }
@@ -225,20 +227,24 @@ export class BitBrowserManager {
         options.body = JSON.stringify(body)
       }
 
+      console.log(`[BitBrowser] ${method} ${url} (token: ${this.apiToken ? 'yes' : 'no'})`)
       const response = await fetch(url, options)
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        const errorBody = await response.text().catch(() => '')
+        console.error(`[BitBrowser] HTTP ${response.status}: ${errorBody}`)
+        throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorBody}`)
       }
 
       const text = await response.text()
-      if (!text) return null
+      if (!text) return {}
 
       return JSON.parse(text) as Record<string, unknown>
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
         throw new Error(`Bit浏览器API请求超时 (${this.requestTimeoutMs}ms): ${path}`)
       }
+      console.error(`[BitBrowser] Request failed: ${method} ${path}:`, (error as Error).message)
       throw error
     } finally {
       clearTimeout(timeout)
