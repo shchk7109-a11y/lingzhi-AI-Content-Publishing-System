@@ -5,8 +5,10 @@ import zhCN from 'antd/locale/zh_CN'
 import App from './App'
 
 // 检查 preload API 是否可用，不可用时提供 mock 防止崩溃
+// 标记是否在Electron环境中运行
+;(window as any).__ELECTRON__ = !!window.api
 if (!window.api) {
-  console.warn('[Renderer] window.api is undefined - preload script not loaded. Injecting mock API.')
+  console.warn('[Renderer] window.api is undefined - 当前在浏览器中运行，非Electron环境。IPC功能不可用。')
   const mockInvoke = (...args: unknown[]) => {
     console.warn('[MockAPI] IPC not available, call ignored:', args)
     return Promise.resolve(null)
