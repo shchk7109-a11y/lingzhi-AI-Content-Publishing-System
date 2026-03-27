@@ -32,19 +32,39 @@ export class XiaohongshuPublisher extends BasePublisher {
       throw new Error('需要登录：请先在Bit浏览器中手动登录小红书')
     }
 
-    // 等待 file input（它可以是隐藏的，所以不要求 visible）
-    try {
-      await this.page.waitForSelector('input[type="file"]', { timeout: 10000 })
-      console.log('[XHS] Upload input ready')
-    } catch {
-      console.warn('[XHS] Upload input not found via waitForSelector, checking with $...')
-      const el = await this.page.$('input[type="file"]')
-      if (el) {
-        console.log('[XHS] Upload input found via $')
-      } else {
-        throw new Error('页面未加载上传区域，可能未登录或页面结构变更')
+    // 确保在"上传图文"模式（小红书创作页有"发布笔记"和"上传视频"两个tab）
+    // 点击"发布笔记"/"上传图文"tab确保在图文模式
+    const clickedImageTab = await this.page.evaluate(() => {
+      const tabs = document.querySelectorAll('[class*="tab"], [class*="menu"] span, [class*="menu"] div, [role="tab"]')
+      for (const tab of tabs) {
+        const text = (tab.textContent || '').trim()
+        if (text.includes('\u53d1\u5e03\u7b14\u8bb0') || text.includes('\u56fe\u6587') || text.includes('\u4e0a\u4f20\u56fe\u6587')) {
+          // 发布笔记 / 图文 / 上传图文
+          ;(tab as HTMLElement).click()
+          return text
+        }
       }
+      return null
+    })
+    if (clickedImageTab) {
+      console.log(`[XHS] Clicked image tab: "${clickedImageTab}"`)
+      await this.behavior.randomDelay(1000, 2000)
+    } else {
+      console.log('[XHS] No image tab found (might already be in image mode)')
     }
+
+    // 打印所有 file input 的信息
+    const fileInputs = await this.page.evaluate(() => {
+      const inputs = document.querySelectorAll('input[type="file"]')
+      return Array.from(inputs).map((el, i) => ({
+        index: i,
+        accept: el.getAttribute('accept'),
+        multiple: el.hasAttribute('multiple'),
+        className: el.className,
+        display: getComputedStyle(el).display
+      }))
+    })
+    console.log(`[XHS] File inputs on page: ${JSON.stringify(fileInputs)}`)
 
     console.log('[XHS] Publish page loaded')
   }
@@ -55,88 +75,155 @@ export class XiaohongshuPublisher extends BasePublisher {
     console.log(`[XHS] Uploading ${paths.length} ${isVideo ? 'video' : 'image'} files...`)
     console.log(`[XHS] File paths: ${JSON.stringify(paths)}`)
 
-    // 查找 file input
-    const fileInput = await this.page.$('input[type="file"]')
+    // 查找正确的 file input（图片的，不是视频的）
+    const fileInput = await this.findImageFileInput()
     if (!fileInput) {
-      console.error('[XHS] No input[type="file"] found on page')
-      throw new Error('未找到文件上传输入框')
+      // 打印所有input信息帮助调试
+      await this.debugPageStructure('upload-no-input')
+      throw new Error('未找到图片上传输入框（只找到视频input或无input）')
     }
-    console.log('[XHS] File input element found, calling uploadFile...')
 
-    try {
-      await fileInput.uploadFile(...paths)
-      console.log('[XHS] uploadFile() completed successfully')
-    } catch (uploadErr) {
-      const msg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr)
-      console.error(`[XHS] uploadFile() FAILED: ${msg}`)
-      // 尝试打印更多信息
-      const inputInfo = await fileInput.evaluate((el) => ({
-        accept: el.getAttribute('accept'),
-        multiple: el.getAttribute('multiple'),
-        className: el.className,
-        display: getComputedStyle(el).display
+    // 检查是否支持多文件
+    const hasMultiple = await fileInput.evaluate((el) => el.hasAttribute('multiple'))
+    console.log(`[XHS] Image input found, multiple=${hasMultiple}`)
+
+    if (paths.length === 1 || hasMultiple) {
+      // 单文件或支持多文件：直接上传
+      try {
+        if (!hasMultiple && paths.length > 1) {
+          // 没有multiple属性但需要传多个文件：先设置multiple
+          await fileInput.evaluate((el) => el.setAttribute('multiple', 'true'))
+          console.log('[XHS] Set multiple attribute on input')
+        }
+        await fileInput.uploadFile(...paths)
+        console.log(`[XHS] uploadFile() success: ${paths.length} files`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`[XHS] uploadFile() failed: ${msg}`)
+        // 回退到逐个上传
+        if (paths.length > 1) {
+          console.log('[XHS] Falling back to single file upload...')
+          await this.uploadFilesOneByOne(paths)
+        } else {
+          throw new Error(`图片上传失败: ${msg}`)
+        }
+      }
+    } else {
+      // 多文件且不支持multiple：逐个上传
+      await this.uploadFilesOneByOne(paths)
+    }
+
+    // 等待编辑器加载
+    await this.waitForEditorAfterUpload(isVideo)
+  }
+
+  /**
+   * 查找图片上传的 file input（排除视频input）
+   */
+  private async findImageFileInput() {
+    const allInputs = await this.page.$$('input[type="file"]')
+    console.log(`[XHS] Found ${allInputs.length} file inputs total`)
+
+    for (let i = 0; i < allInputs.length; i++) {
+      const info = await allInputs[i].evaluate((el) => ({
+        accept: el.getAttribute('accept') || '',
+        className: el.className
       }))
-      console.error(`[XHS] Input element info: ${JSON.stringify(inputInfo)}`)
-      throw new Error(`图片上传失败: ${msg}`)
+      console.log(`[XHS] Input[${i}]: accept="${info.accept}" class="${info.className}"`)
+
+      const accept = info.accept.toLowerCase()
+
+      // 这个input接受图片格式
+      if (accept.includes('image') || accept.includes('jpg') || accept.includes('png') || accept.includes('jpeg') || accept.includes('webp')) {
+        console.log(`[XHS] Found IMAGE input at index ${i}`)
+        return allInputs[i]
+      }
+
+      // 这个input的accept为空（通用的，也可以用）
+      if (!accept || accept === '') {
+        console.log(`[XHS] Found GENERIC input at index ${i} (no accept filter)`)
+        return allInputs[i]
+      }
     }
 
-    // === 关键：等待编辑器完全加载 ===
-    // 上传后小红书会异步加载编辑界面（标题+正文+标签区域）
-    // 用 waitForFunction 在浏览器上下文中轮询检测
-    console.log('[XHS] Waiting for editor to fully load after upload...')
+    // 如果所有input都是视频格式，找不到图片input
+    // 尝试：修改视频input的accept属性让它接受图片
+    if (allInputs.length > 0) {
+      console.log('[XHS] No image input found, modifying first input accept to include images')
+      await allInputs[0].evaluate((el) => {
+        el.setAttribute('accept', 'image/*,.jpg,.jpeg,.png,.webp,.gif')
+        el.setAttribute('multiple', 'true')
+      })
+      return allInputs[0]
+    }
 
+    return null
+  }
+
+  /**
+   * 逐个上传文件
+   */
+  private async uploadFilesOneByOne(paths: string[]): Promise<void> {
+    for (let i = 0; i < paths.length; i++) {
+      console.log(`[XHS] Uploading file ${i + 1}/${paths.length}: ${paths[i]}`)
+
+      const fileInput = await this.findImageFileInput()
+      if (!fileInput) {
+        console.error(`[XHS] No file input for file ${i + 1}`)
+        break
+      }
+
+      try {
+        await fileInput.uploadFile(paths[i])
+        console.log(`[XHS] File ${i + 1} uploaded`)
+      } catch (err) {
+        console.error(`[XHS] File ${i + 1} upload failed:`, (err as Error).message)
+      }
+
+      if (i < paths.length - 1) {
+        await this.behavior.randomDelay(1500, 3000)
+      }
+    }
+  }
+
+  /**
+   * 等待编辑器在上传后加载完成
+   */
+  private async waitForEditorAfterUpload(isVideo: boolean): Promise<void> {
+    console.log('[XHS] Waiting for editor to load after upload...')
     const timeoutMs = isVideo ? 120000 : 60000
 
     try {
       await this.page.waitForFunction(() => {
-        // 检测方式1：至少有1个 contenteditable 元素
         const editables = document.querySelectorAll('[contenteditable="true"]')
         if (editables.length > 0) return true
-
-        // 检测方式2：页面文字中有字数统计（"0/20" 或 "0/1000"）
         const text = document.body.innerText || ''
         if (text.includes('/20') || text.includes('/1000')) return true
-
-        // 检测方式3：有 placeholder 包含"标题"的元素
         const allPh = document.querySelectorAll('[placeholder], [data-placeholder]')
         for (const el of allPh) {
           const ph = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''
-          if (ph.includes('\u6807\u9898')) return true  // "标题" 的Unicode
+          if (ph.includes('\u6807\u9898')) return true
         }
-
-        // 检测方式4：class 包含 title、editor 的元素
         if (document.querySelector('[class*="title-input"], [class*="post-title"], [class*="editor"]')) return true
-
         return false
       }, { timeout: timeoutMs, polling: 2000 })
 
-      console.log('[XHS] Editor loaded successfully!')
+      console.log('[XHS] Editor loaded!')
     } catch {
-      // 超时但不立即失败，先打印调试信息
       console.warn('[XHS] Editor load timeout, dumping page state...')
-      await this.debugPageStructure('upload-wait-timeout')
-
-      // 尝试截图看看当前页面状态
-      await this.takeScreenshot('upload_timeout')
-
-      throw new Error(`图片上传后编辑器未加载（等待 ${timeoutMs / 1000}s 超时）。请检查截图确认页面状态。`)
+      await this.debugPageStructure('editor-timeout')
+      await this.takeScreenshot('editor_timeout')
+      throw new Error(`编辑器未加载（${timeoutMs / 1000}s超时）`)
     }
 
-    // 额外等待让 DOM 完全稳定
     await this.behavior.randomDelay(2000, 3000)
 
-    // 验证编辑器确实存在
     const editorInfo = await this.page.evaluate(() => {
       const editables = document.querySelectorAll('[contenteditable="true"]')
       const inputs = document.querySelectorAll('input:not([type="file"]), textarea')
-      return {
-        editableCount: editables.length,
-        inputCount: inputs.length,
-        hasTitle: !!document.querySelector('[class*="title"], [placeholder*="\u6807\u9898"], [data-placeholder*="\u6807\u9898"]'),
-        bodyText: document.body.innerText.slice(0, 200)
-      }
+      return { editableCount: editables.length, inputCount: inputs.length }
     })
-    console.log(`[XHS] Editor state: ${JSON.stringify(editorInfo)}`)
+    console.log(`[XHS] Editor ready: ${JSON.stringify(editorInfo)}`)
   }
 
   /**

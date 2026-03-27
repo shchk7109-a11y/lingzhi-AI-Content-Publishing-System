@@ -4,17 +4,19 @@ import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import App from './App'
 
-// 检查 preload API 是否可用，不可用时提供 mock 防止崩溃
-// 标记是否在Electron环境中运行
-;(window as any).__ELECTRON__ = !!window.api
+// 检查 preload API 是否可用
+// 检测方式：window.api 存在 且 settings.get 是函数（排除mock）
+const isRealElectron = !!(window.api && typeof window.api?.settings?.get === 'function' && !('__mock' in window.api))
+;(window as any).__ELECTRON__ = isRealElectron
 if (!window.api) {
-  console.warn('[Renderer] window.api is undefined - 当前在浏览器中运行，非Electron环境。IPC功能不可用。')
+  console.warn('[Renderer] window.api is undefined - 注入mock API')
   const mockInvoke = (...args: unknown[]) => {
     console.warn('[MockAPI] IPC not available, call ignored:', args)
     return Promise.resolve(null)
   }
   const noop = () => {}
   ;(window as any).api = {
+    __mock: true,
     content: { getAll: mockInvoke, getById: mockInvoke, insert: mockInvoke, batchInsert: mockInvoke, updateStatus: mockInvoke, updateTags: mockInvoke, delete: mockInvoke },
     accounts: { getAll: mockInvoke, getById: mockInvoke, insert: mockInvoke, batchInsert: mockInvoke, updatePersona: mockInvoke, updateStatus: mockInvoke, delete: mockInvoke },
     matchRecords: { getAll: mockInvoke, insert: mockInvoke, updateStatus: mockInvoke },
