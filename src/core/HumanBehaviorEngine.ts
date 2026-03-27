@@ -166,11 +166,16 @@ export class HumanBehaviorEngine {
    * 发布前预热：浏览小红书首页
    */
   async warmup(page: Page, intensity: 'high' | 'medium' | 'low' = 'medium'): Promise<void> {
-    const browseCount = intensity === 'high' ? randomBetween(3, 5)
-      : intensity === 'medium' ? randomBetween(2, 3)
-      : randomBetween(1, 2)
+    const browseCount = intensity === 'high' ? 2
+      : intensity === 'medium' ? randomBetween(1, 2)
+      : randomBetween(0, 1)
 
     console.log(`[HumanBehavior] Warmup: browsing ${browseCount} notes (intensity=${intensity})`)
+
+    if (browseCount === 0) {
+      console.log('[HumanBehavior] Warmup skipped (mature account)')
+      return
+    }
 
     // 浏览首页
     await page.goto('https://www.xiaohongshu.com/explore', {
@@ -178,15 +183,14 @@ export class HumanBehaviorEngine {
       timeout: 20000
     }).catch(() => { /* 可能已在首页 */ })
 
-    await this.randomDelay(2000, 4000)
+    await this.randomDelay(1500, 3000)
 
-    // 滚动首页
-    await this.humanScroll(page, randomBetween(2, 4))
+    // 快速滚动首页
+    await this.humanScroll(page, randomBetween(1, 2))
 
     // 随机点击笔记浏览
     for (let i = 0; i < browseCount; i++) {
       try {
-        // 尝试点击Feed中的笔记
         const noteLinks = await page.$$('a[href*="/explore/"]')
         if (noteLinks.length === 0) break
 
@@ -196,32 +200,17 @@ export class HumanBehaviorEngine {
         if (box) {
           await this.humanClickAt(page, box.x + box.width / 2, box.y + box.height / 2)
 
-          // 在笔记页停留
-          const stayTime = intensity === 'high' ? randomBetween(5000, 10000)
-            : intensity === 'medium' ? randomBetween(3000, 8000)
-            : randomBetween(2000, 5000)
-          await this.randomDelay(stayTime, stayTime + 2000)
+          // 停留时间大幅缩短
+          const stayTime = intensity === 'high' ? randomBetween(3000, 5000)
+            : randomBetween(2000, 4000)
+          await this.randomDelay(stayTime, stayTime + 1000)
 
-          // 滚动浏览笔记内容
-          await this.humanScroll(page, randomBetween(1, 3))
-
-          // 新号高概率点赞
-          if (intensity === 'high' && Math.random() < 0.5) {
-            try {
-              const likeBtn = await page.$('.like-wrapper, [class*="like"], .engageBar .like')
-              if (likeBtn) {
-                const likeBox = await likeBtn.boundingBox()
-                if (likeBox) {
-                  await this.humanClickAt(page, likeBox.x + likeBox.width / 2, likeBox.y + likeBox.height / 2)
-                  await this.randomDelay(500, 1500)
-                }
-              }
-            } catch { /* 点赞失败可以忽略 */ }
-          }
+          // 快速滚动1次
+          await this.humanScroll(page, 1)
 
           // 返回
           await page.goBack().catch(() => {})
-          await this.randomDelay(1500, 3000)
+          await this.randomDelay(1000, 2000)
         }
       } catch {
         // 单个笔记浏览失败，继续下一个

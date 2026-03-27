@@ -53,13 +53,32 @@ export class XiaohongshuPublisher extends BasePublisher {
     if (paths.length === 0) throw new Error('没有媒体文件可上传')
 
     console.log(`[XHS] Uploading ${paths.length} ${isVideo ? 'video' : 'image'} files...`)
+    console.log(`[XHS] File paths: ${JSON.stringify(paths)}`)
 
     // 查找 file input
     const fileInput = await this.page.$('input[type="file"]')
-    if (!fileInput) throw new Error('未找到文件上传输入框')
+    if (!fileInput) {
+      console.error('[XHS] No input[type="file"] found on page')
+      throw new Error('未找到文件上传输入框')
+    }
+    console.log('[XHS] File input element found, calling uploadFile...')
 
-    await fileInput.uploadFile(...paths)
-    console.log(`[XHS] Files injected via uploadFile()`)
+    try {
+      await fileInput.uploadFile(...paths)
+      console.log('[XHS] uploadFile() completed successfully')
+    } catch (uploadErr) {
+      const msg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr)
+      console.error(`[XHS] uploadFile() FAILED: ${msg}`)
+      // 尝试打印更多信息
+      const inputInfo = await fileInput.evaluate((el) => ({
+        accept: el.getAttribute('accept'),
+        multiple: el.getAttribute('multiple'),
+        className: el.className,
+        display: getComputedStyle(el).display
+      }))
+      console.error(`[XHS] Input element info: ${JSON.stringify(inputInfo)}`)
+      throw new Error(`图片上传失败: ${msg}`)
+    }
 
     // === 关键：等待编辑器完全加载 ===
     // 上传后小红书会异步加载编辑界面（标题+正文+标签区域）

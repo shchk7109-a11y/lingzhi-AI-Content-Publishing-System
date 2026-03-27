@@ -242,10 +242,20 @@ export function registerIpcHandlers(): void {
     imagePaths: string[]
     accountLevel: string
   }) => {
-    const win = BrowserWindow.getFocusedWindow()
+    // 获取所有窗口中的第一个（不依赖焦点状态）
+    const allWindows = BrowserWindow.getAllWindows()
+    const win = allWindows.length > 0 ? allWindows[0] : null
+    console.log(`[publish:test] Window available: ${!!win}, params: profileId=${params.profileId}, images=${params.imagePaths.length}`)
 
     const sendStep = (data: Record<string, unknown>) => {
-      win?.webContents.send('publish:step-update', data)
+      console.log(`[publish:test] Step update: ${JSON.stringify(data)}`)
+      try {
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('publish:step-update', data)
+        }
+      } catch (e) {
+        console.error('[publish:test] Failed to send step update:', e)
+      }
     }
 
     let acquired = false
@@ -263,7 +273,6 @@ export function registerIpcHandlers(): void {
       const behavior = new HumanBehaviorEngine()
       const publisher = new XiaohongshuPublisher(slot.page, behavior)
 
-      // 设置步骤进度回调
       publisher.setStepCallback((update) => {
         sendStep(update)
       })
@@ -275,18 +284,26 @@ export function registerIpcHandlers(): void {
         imagePaths: params.imagePaths
       }
 
+      console.log(`[publish:test] Starting publish flow...`)
       const result = await publisher.publish(publishContent, params.accountLevel)
+      console.log(`[publish:test] Publish result: success=${result.success}, error=${result.error}`)
 
       return result
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error)
+      console.error(`[publish:test] FATAL ERROR: ${errMsg}`)
+      if (error instanceof Error && error.stack) {
+        console.error(error.stack)
+      }
       sendStep({ step: 'error', status: 'failed', error: errMsg })
       return { success: false, error: errMsg, screenshots: [], steps: [] }
     } finally {
       if (acquired) {
         try {
           await windowPool.release(params.profileId)
-        } catch { /* ignore */ }
+        } catch (e) {
+          console.error('[publish:test] Release error:', e)
+        }
       }
     }
   })
