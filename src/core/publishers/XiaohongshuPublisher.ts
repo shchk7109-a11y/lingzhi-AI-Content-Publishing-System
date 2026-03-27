@@ -25,16 +25,26 @@ export class XiaohongshuPublisher extends BasePublisher {
 
     // 检测登录弹窗
     const needsLogin = await this.page.evaluate(() => {
-      const html = document.body.innerHTML
+      const html = document.body.innerHTML.toLowerCase()
       return html.includes('login') && (html.includes('二维码') || html.includes('扫码'))
     })
     if (needsLogin) {
       throw new Error('需要登录：请先在Bit浏览器中手动登录小红书')
     }
 
-    // 等待上传区域出现
-    const hasUpload = await this.behavior.waitForElement(this.page, 'input[type="file"]', 8000)
-    console.log(`[XHS] Upload input found: ${hasUpload}`)
+    // 等待 file input（它可以是隐藏的，所以不要求 visible）
+    try {
+      await this.page.waitForSelector('input[type="file"]', { timeout: 10000 })
+      console.log('[XHS] Upload input ready')
+    } catch {
+      console.warn('[XHS] Upload input not found via waitForSelector, checking with $...')
+      const el = await this.page.$('input[type="file"]')
+      if (el) {
+        console.log('[XHS] Upload input found via $')
+      } else {
+        throw new Error('页面未加载上传区域，可能未登录或页面结构变更')
+      }
+    }
 
     console.log('[XHS] Publish page loaded')
   }
@@ -44,65 +54,84 @@ export class XiaohongshuPublisher extends BasePublisher {
 
     console.log(`[XHS] Uploading ${paths.length} ${isVideo ? 'video' : 'image'} files...`)
 
-    // 查找 file input（可能隐藏）
+    // 查找 file input
     const fileInput = await this.page.$('input[type="file"]')
     if (!fileInput) throw new Error('未找到文件上传输入框')
 
     await fileInput.uploadFile(...paths)
-    console.log(`[XHS] Files injected: ${paths.length}`)
+    console.log(`[XHS] Files injected via uploadFile()`)
 
-    // 等待上传完成：图片上传后页面会切换到编辑模式
-    // 检测标志：出现标题输入区域或字数统计
-    console.log('[XHS] Waiting for editor to appear after upload...')
-    const maxWaitMs = isVideo ? 120000 : 60000
-    const startTime = Date.now()
+    // === 关键：等待编辑器完全加载 ===
+    // 上传后小红书会异步加载编辑界面（标题+正文+标签区域）
+    // 用 waitForFunction 在浏览器上下文中轮询检测
+    console.log('[XHS] Waiting for editor to fully load after upload...')
 
-    while (Date.now() - startTime < maxWaitMs) {
-      await this.behavior.randomDelay(1500, 2500)
+    const timeoutMs = isVideo ? 120000 : 60000
 
-      // 检查编辑器是否已出现（标题/正文区域）
-      const editorReady = await this.page.evaluate(() => {
-        // 查找包含"标题"placeholder的元素
-        const allElements = document.querySelectorAll('[placeholder], [data-placeholder]')
-        for (const el of allElements) {
-          const ph = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''
-          if (ph.includes('标题')) return true
-        }
-        // 查找字数统计 0/20
-        const html = document.body.innerText
-        if (html.includes('/20') || html.includes('/1000')) return true
-        // 查找 contenteditable 元素（编辑模式标志）
+    try {
+      await this.page.waitForFunction(() => {
+        // 检测方式1：至少有1个 contenteditable 元素
         const editables = document.querySelectorAll('[contenteditable="true"]')
-        if (editables.length >= 2) return true
+        if (editables.length > 0) return true
+
+        // 检测方式2：页面文字中有字数统计（"0/20" 或 "0/1000"）
+        const text = document.body.innerText || ''
+        if (text.includes('/20') || text.includes('/1000')) return true
+
+        // 检测方式3：有 placeholder 包含"标题"的元素
+        const allPh = document.querySelectorAll('[placeholder], [data-placeholder]')
+        for (const el of allPh) {
+          const ph = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''
+          if (ph.includes('\u6807\u9898')) return true  // "标题" 的Unicode
+        }
+
+        // 检测方式4：class 包含 title、editor 的元素
+        if (document.querySelector('[class*="title-input"], [class*="post-title"], [class*="editor"]')) return true
+
         return false
-      })
+      }, { timeout: timeoutMs, polling: 2000 })
 
-      if (editorReady) {
-        console.log('[XHS] Editor appeared - upload complete')
-        break
-      }
+      console.log('[XHS] Editor loaded successfully!')
+    } catch {
+      // 超时但不立即失败，先打印调试信息
+      console.warn('[XHS] Editor load timeout, dumping page state...')
+      await this.debugPageStructure('upload-wait-timeout')
 
-      if (Date.now() - startTime > maxWaitMs * 0.8) {
-        console.warn('[XHS] Upload wait timeout, proceeding anyway')
-        break
-      }
+      // 尝试截图看看当前页面状态
+      await this.takeScreenshot('upload_timeout')
+
+      throw new Error(`图片上传后编辑器未加载（等待 ${timeoutMs / 1000}s 超时）。请检查截图确认页面状态。`)
     }
 
-    await this.behavior.randomDelay(1000, 2000)
+    // 额外等待让 DOM 完全稳定
+    await this.behavior.randomDelay(2000, 3000)
+
+    // 验证编辑器确实存在
+    const editorInfo = await this.page.evaluate(() => {
+      const editables = document.querySelectorAll('[contenteditable="true"]')
+      const inputs = document.querySelectorAll('input:not([type="file"]), textarea')
+      return {
+        editableCount: editables.length,
+        inputCount: inputs.length,
+        hasTitle: !!document.querySelector('[class*="title"], [placeholder*="\u6807\u9898"], [data-placeholder*="\u6807\u9898"]'),
+        bodyText: document.body.innerText.slice(0, 200)
+      }
+    })
+    console.log(`[XHS] Editor state: ${JSON.stringify(editorInfo)}`)
   }
 
   /**
    * 填写标题（最多20字）
-   * 策略：用 page.evaluate 在DOM中精确定位标题输入元素
    */
   protected async inputTitle(title: string): Promise<void> {
     const truncatedTitle = title.slice(0, 20)
     console.log(`[XHS] Inputting title: "${truncatedTitle}"`)
 
-    // 在浏览器上下文中查找标题输入元素
+    // 先再次确认编辑器已加载
+    await this.ensureEditorLoaded()
+
     const titleEl = await this.findTitleElement()
     if (!titleEl) {
-      // 打印页面调试信息
       await this.debugPageStructure('title')
       throw new Error('未找到标题输入元素')
     }
@@ -126,16 +155,38 @@ export class XiaohongshuPublisher extends BasePublisher {
   }
 
   /**
-   * 查找标题输入元素
+   * 确保编辑器已加载，如未加载则等待
+   */
+  private async ensureEditorLoaded(): Promise<void> {
+    const loaded = await this.page.evaluate(() => {
+      const editables = document.querySelectorAll('[contenteditable="true"]')
+      const inputs = document.querySelectorAll('input:not([type="file"]), textarea')
+      return editables.length > 0 || inputs.length > 0
+    })
+
+    if (!loaded) {
+      console.log('[XHS] Editor not ready, waiting additional 5s...')
+      try {
+        await this.page.waitForFunction(() => {
+          return document.querySelectorAll('[contenteditable="true"]').length > 0 ||
+                 document.querySelectorAll('input:not([type="file"])').length > 0
+        }, { timeout: 5000, polling: 500 })
+      } catch {
+        console.warn('[XHS] Editor still not ready after extra wait')
+      }
+    }
+  }
+
+  /**
+   * 查找标题输入元素（5级递进策略）
    */
   private async findTitleElement(): Promise<ElementHandle | null> {
-    // 方案1: placeholder 包含"标题"的 input 元素
-    const selectors = [
-      'input[placeholder*="标题"]',
-      'input[placeholder*="填写标题"]',
-      'textarea[placeholder*="标题"]',
-    ]
-    for (const sel of selectors) {
+    // 方案1: input/textarea placeholder包含"标题"
+    for (const sel of [
+      'input[placeholder*="\u6807\u9898"]',   // 标题
+      'textarea[placeholder*="\u6807\u9898"]',
+      'input[placeholder*="\u586b\u5199\u6807\u9898"]', // 填写标题
+    ]) {
       const el = await this.page.$(sel)
       if (el) {
         console.log(`[XHS] Title found via selector: ${sel}`)
@@ -143,72 +194,81 @@ export class XiaohongshuPublisher extends BasePublisher {
       }
     }
 
-    // 方案2: placeholder/data-placeholder 包含"标题"的 contenteditable div
+    // 方案2: contenteditable 的 placeholder/data-placeholder 包含"标题"
     const editableTitle = await this.page.evaluateHandle(() => {
-      // 查找所有 contenteditable 元素
       const editables = document.querySelectorAll('[contenteditable="true"]')
       for (const el of editables) {
         const ph = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''
-        if (ph.includes('标题')) return el
+        if (ph.includes('\u6807\u9898')) return el  // 标题
       }
-      // 查找带 placeholder 子元素包含"标题"文字的 contenteditable
+      // placeholder 子元素文字匹配
       for (const el of editables) {
-        const placeholderChild = el.querySelector('[class*="placeholder"]')
-        if (placeholderChild && placeholderChild.textContent?.includes('标题')) return el
+        const phChild = el.querySelector('[class*="placeholder"], span[class*="place"]')
+        if (phChild && phChild.textContent && phChild.textContent.includes('\u6807\u9898')) return el
       }
       return null
     })
     if (editableTitle && editableTitle.asElement()) {
-      console.log('[XHS] Title found via contenteditable with placeholder "标题"')
+      console.log('[XHS] Title found via contenteditable placeholder')
       return editableTitle.asElement()
     }
 
     // 方案3: 靠近 "/20" 字数统计的输入元素
-    const nearCountEl = await this.page.evaluateHandle(() => {
-      // 找到包含 "/20" 的元素
+    const nearCount = await this.page.evaluateHandle(() => {
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
       let node: Node | null
       while ((node = walker.nextNode())) {
-        if (node.textContent && /\/20/.test(node.textContent)) {
-          // 从该元素向上/向前查找最近的输入元素
+        if (node.textContent && /\/20\b/.test(node.textContent)) {
+          // 从该元素向上查找最近的可编辑元素
           let parent = node.parentElement
-          for (let i = 0; i < 10 && parent; i++) {
-            const input = parent.querySelector('input, textarea, [contenteditable="true"]')
+          for (let i = 0; i < 15 && parent; i++) {
+            const editable = parent.querySelector('[contenteditable="true"]')
+            if (editable) return editable
+            const input = parent.querySelector('input:not([type="file"]), textarea')
             if (input) return input
             parent = parent.parentElement
-          }
-          // 查找前面的兄弟元素
-          const container = node.parentElement?.parentElement
-          if (container) {
-            const editable = container.querySelector('[contenteditable="true"]')
-            if (editable) return editable
-            const inputEl = container.querySelector('input, textarea')
-            if (inputEl) return inputEl
           }
         }
       }
       return null
     })
-    if (nearCountEl && nearCountEl.asElement()) {
-      console.log('[XHS] Title found via proximity to "/20" counter')
-      return nearCountEl.asElement()
+    if (nearCount && nearCount.asElement()) {
+      console.log('[XHS] Title found via proximity to /20 counter')
+      return nearCount.asElement()
     }
 
-    // 方案4: 第一个 contenteditable（上传图片后编辑模式通常第一个是标题）
-    const firstEditable = await this.page.$('[contenteditable="true"]')
-    if (firstEditable) {
-      const box = await firstEditable.boundingBox()
-      if (box && box.height < 100) {
-        console.log('[XHS] Title found via first contenteditable (small height)')
-        return firstEditable
+    // 方案4: 第一个 contenteditable（高度较小的）
+    const allEditables = await this.page.$$('[contenteditable="true"]')
+    console.log(`[XHS] Total contenteditable elements: ${allEditables.length}`)
+    if (allEditables.length > 0) {
+      // 取高度最小的 contenteditable（标题框通常比正文小）
+      let minHeight = Infinity
+      let titleCandidate: ElementHandle | null = null
+      for (const el of allEditables) {
+        const box = await el.boundingBox()
+        if (box && box.height < minHeight && box.height > 10) {
+          minHeight = box.height
+          titleCandidate = el
+        }
+      }
+      if (titleCandidate) {
+        console.log(`[XHS] Title found via smallest contenteditable (h=${minHeight}px)`)
+        return titleCandidate
       }
     }
 
-    // 方案5: class 名包含 title 的输入元素
-    const classTitle = await this.page.$('[class*="title"] input, [class*="title"] [contenteditable="true"], [class*="title"][contenteditable="true"]')
-    if (classTitle) {
-      console.log('[XHS] Title found via class containing "title"')
-      return classTitle
+    // 方案5: class包含title的元素
+    for (const sel of [
+      '[class*="title"] input',
+      '[class*="title"] [contenteditable="true"]',
+      '[class*="title"][contenteditable="true"]',
+      '[class*="post-title"]',
+    ]) {
+      const el = await this.page.$(sel)
+      if (el) {
+        console.log(`[XHS] Title found via class selector: ${sel}`)
+        return el
+      }
     }
 
     return null
@@ -216,7 +276,6 @@ export class XiaohongshuPublisher extends BasePublisher {
 
   /**
    * 填写正文
-   * 策略：查找标题之外的第二个 contenteditable 或包含"正文"placeholder的元素
    */
   protected async inputContent(content: string): Promise<void> {
     console.log(`[XHS] Inputting content (${content.length} chars)`)
@@ -227,11 +286,8 @@ export class XiaohongshuPublisher extends BasePublisher {
       throw new Error('未找到正文输入元素')
     }
 
-    // 点击获取焦点
     await contentEl.click()
     await this.behavior.randomDelay(300, 600)
-
-    // 输入正文
     await this.behavior.humanTypeInPlace(this.page, content)
     await this.behavior.randomDelay(500, 1000)
 
@@ -243,35 +299,35 @@ export class XiaohongshuPublisher extends BasePublisher {
    */
   private async findContentElement(): Promise<ElementHandle | null> {
     // 方案1: placeholder 包含"正文"或"描述"
-    const contentEl = await this.page.evaluateHandle(() => {
+    const byPlaceholder = await this.page.evaluateHandle(() => {
       const editables = document.querySelectorAll('[contenteditable="true"]')
       for (const el of editables) {
         const ph = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''
-        if (ph.includes('正文') || ph.includes('描述') || ph.includes('输入正文')) return el
+        if (ph.includes('\u6b63\u6587') || ph.includes('\u63cf\u8ff0') || ph.includes('\u8f93\u5165\u6b63\u6587')) return el
+        // 正文 / 描述 / 输入正文
       }
-      // 查找 placeholder 子元素
       for (const el of editables) {
-        const placeholderChild = el.querySelector('[class*="placeholder"]')
-        if (placeholderChild) {
-          const text = placeholderChild.textContent || ''
-          if (text.includes('正文') || text.includes('描述')) return el
+        const phChild = el.querySelector('[class*="placeholder"], span[class*="place"]')
+        if (phChild) {
+          const t = phChild.textContent || ''
+          if (t.includes('\u6b63\u6587') || t.includes('\u63cf\u8ff0')) return el
         }
       }
       return null
     })
-    if (contentEl && contentEl.asElement()) {
-      console.log('[XHS] Content found via placeholder containing "正文/描述"')
-      return contentEl.asElement()
+    if (byPlaceholder && byPlaceholder.asElement()) {
+      console.log('[XHS] Content found via placeholder')
+      return byPlaceholder.asElement()
     }
 
-    // 方案2: 靠近 "/1000" 字数统计的元素
+    // 方案2: 靠近 "/1000" 的可编辑元素
     const nearCount = await this.page.evaluateHandle(() => {
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
       let node: Node | null
       while ((node = walker.nextNode())) {
         if (node.textContent && /\/1000/.test(node.textContent)) {
           let parent = node.parentElement
-          for (let i = 0; i < 10 && parent; i++) {
+          for (let i = 0; i < 15 && parent; i++) {
             const editable = parent.querySelector('[contenteditable="true"]')
             if (editable) return editable
             parent = parent.parentElement
@@ -281,24 +337,23 @@ export class XiaohongshuPublisher extends BasePublisher {
       return null
     })
     if (nearCount && nearCount.asElement()) {
-      console.log('[XHS] Content found via proximity to "/1000" counter')
+      console.log('[XHS] Content found via /1000 counter')
       return nearCount.asElement()
     }
 
-    // 方案3: .ql-editor 或常见编辑器类
+    // 方案3: 编辑器类选择器
     for (const sel of ['.ql-editor', '#post-content', '[class*="editor"][contenteditable]']) {
       const el = await this.page.$(sel)
       if (el) {
-        console.log(`[XHS] Content found via selector: ${sel}`)
+        console.log(`[XHS] Content found via: ${sel}`)
         return el
       }
     }
 
-    // 方案4: 第二个 contenteditable（第一个通常是标题）
+    // 方案4: contenteditable 中高度最大的
     const editables = await this.page.$$('[contenteditable="true"]')
-    console.log(`[XHS] Found ${editables.length} contenteditable elements total`)
+    console.log(`[XHS] Total editables for content search: ${editables.length}`)
     if (editables.length >= 2) {
-      // 找高度最大的那个（正文区域通常更高）
       let maxHeight = 0
       let bestEl: ElementHandle | null = null
       for (const el of editables) {
@@ -309,12 +364,14 @@ export class XiaohongshuPublisher extends BasePublisher {
         }
       }
       if (bestEl) {
-        console.log(`[XHS] Content found via largest contenteditable (height: ${maxHeight}px)`)
+        console.log(`[XHS] Content found via largest contenteditable (h=${maxHeight}px)`)
         return bestEl
       }
-      // 退而求其次：取第二个
-      console.log('[XHS] Content found via second contenteditable')
-      return editables[1]
+    }
+    // 只有1个时也试试（可能标题和正文是同一种容器的不同区域）
+    if (editables.length === 1) {
+      console.log('[XHS] Only 1 contenteditable, using it for content')
+      return editables[0]
     }
 
     return null
@@ -322,7 +379,6 @@ export class XiaohongshuPublisher extends BasePublisher {
 
   /**
    * 添加话题标签
-   * 策略：查找 "# 话题" 按钮或标签输入区
    */
   protected async addTags(tags: string[]): Promise<void> {
     const limitedTags = tags.slice(0, 5)
@@ -332,36 +388,31 @@ export class XiaohongshuPublisher extends BasePublisher {
 
     for (const tag of limitedTags) {
       try {
-        // 方案1: 找到"# 话题"按钮并点击
+        // 找"# 话题"按钮并点击
         const topicBtn = await this.findTopicButton()
         if (topicBtn) {
           await topicBtn.click()
           await this.behavior.randomDelay(500, 800)
 
-          // 等待输入框出现
+          // 等待输入框出现并输入
           const topicInput = await this.page.evaluateHandle(() => {
-            // 查找当前聚焦的input或最近出现的搜索输入框
             const active = document.activeElement
             if (active && (active.tagName === 'INPUT' || active.getAttribute('contenteditable'))) return active
-            // 查找话题搜索输入
-            const inputs = document.querySelectorAll('input[placeholder*="搜索"], input[placeholder*="话题"], input[type="search"]')
+            const inputs = document.querySelectorAll('input[placeholder*="\u641c\u7d22"], input[placeholder*="\u8bdd\u9898"], input[type="search"]')
             if (inputs.length > 0) return inputs[inputs.length - 1]
             return null
           })
 
           if (topicInput && topicInput.asElement()) {
-            const inputEl = topicInput.asElement()!
-            await inputEl.click()
+            await topicInput.asElement()!.click()
             await this.behavior.randomDelay(200, 400)
             await this.behavior.humanTypeInPlace(this.page, tag)
           } else {
-            // 直接打字（可能焦点已经在输入框）
             await this.behavior.humanTypeInPlace(this.page, tag)
           }
         } else {
-          // 方案2: 在正文末尾手动输入 #tag
-          console.log(`[XHS] Topic button not found, appending #${tag} to content`)
-          // 先点击正文区域末尾
+          // 在正文末尾追加 #tag
+          console.log(`[XHS] Topic button not found, appending #${tag}`)
           await this.page.keyboard.press('End')
           await this.page.keyboard.insertText(` #${tag}`)
           await this.behavior.randomDelay(300, 500)
@@ -370,10 +421,9 @@ export class XiaohongshuPublisher extends BasePublisher {
 
         await this.behavior.randomDelay(800, 1500)
 
-        // 等待建议列表并点击第一个
+        // 等待建议列表并点击
         const clicked = await this.clickFirstSuggestion()
         if (!clicked) {
-          // 没有建议，按 Enter 确认
           await this.page.keyboard.press('Enter')
           console.log(`[XHS] Tag "${tag}" confirmed via Enter`)
         } else {
@@ -387,23 +437,16 @@ export class XiaohongshuPublisher extends BasePublisher {
     }
   }
 
-  /**
-   * 查找 "# 话题" 按钮
-   */
   private async findTopicButton(): Promise<ElementHandle | null> {
-    // 遍历按钮/可点击元素，找文本包含"话题"或"#"的
     const btn = await this.page.evaluateHandle(() => {
-      const candidates = document.querySelectorAll('button, [role="button"], span[class*="topic"], div[class*="topic"], [class*="hash-tag"], [class*="hashtag"]')
+      // 遍历所有可点击元素找"话题"文字
+      const candidates = document.querySelectorAll('button, [role="button"], span, div')
       for (const el of candidates) {
-        const text = el.textContent?.trim() || ''
-        if (text === '#' || text === '# 话题' || text === '#话题' || text.includes('话题')) {
+        const text = (el.textContent || '').trim()
+        if ((text === '#' || text === '# \u8bdd\u9898' || text === '#\u8bdd\u9898' || text.includes('\u8bdd\u9898'))
+            && el.getBoundingClientRect().width < 200) {
           return el
         }
-      }
-      // 查找 SVG+文字组合的话题按钮
-      const allEls = document.querySelectorAll('div, span')
-      for (const el of allEls) {
-        if (el.children.length <= 3 && el.textContent?.trim() === '# 话题') return el
       }
       return null
     })
@@ -411,27 +454,17 @@ export class XiaohongshuPublisher extends BasePublisher {
       console.log('[XHS] Topic button found')
       return btn.asElement()
     }
-    console.log('[XHS] Topic button not found')
     return null
   }
 
-  /**
-   * 点击建议列表的第一个结果
-   */
   private async clickFirstSuggestion(): Promise<boolean> {
-    // 等待最多3秒
     for (let i = 0; i < 6; i++) {
       await this.behavior.randomDelay(400, 600)
-
       const suggestion = await this.page.evaluateHandle(() => {
-        // 查找下拉建议列表的第一个可点击项
         const selectors = [
-          '[class*="suggestion"] li',
-          '[class*="topic-item"]',
-          '[class*="search-result"] [class*="item"]',
-          '[class*="dropdown"] [class*="option"]',
-          '[class*="hashtag-list"] [class*="item"]',
-          '[class*="topic-list"] > div',
+          '[class*="suggestion"] li', '[class*="topic-item"]',
+          '[class*="search-result"] [class*="item"]', '[class*="dropdown"] [class*="option"]',
+          '[class*="hashtag-list"] [class*="item"]', '[class*="topic-list"] > div',
           '[class*="result-list"] > div',
         ]
         for (const sel of selectors) {
@@ -440,10 +473,8 @@ export class XiaohongshuPublisher extends BasePublisher {
         }
         return null
       })
-
       if (suggestion && suggestion.asElement()) {
-        const el = suggestion.asElement()!
-        await el.click()
+        await suggestion.asElement()!.click()
         return true
       }
     }
@@ -456,20 +487,20 @@ export class XiaohongshuPublisher extends BasePublisher {
   protected async clickPublish(): Promise<string | null> {
     console.log('[XHS] Looking for publish button...')
 
-    // 遍历所有 button，找文本为"发布"的（排除"暂存"）
     const buttons = await this.page.$$('button')
-    console.log(`[XHS] Found ${buttons.length} buttons on page`)
+    console.log(`[XHS] Found ${buttons.length} buttons`)
 
     for (const btn of buttons) {
-      const text = await btn.evaluate((el) => el.textContent?.trim() || '')
-      const isDisabled = await btn.evaluate((el) => (el as HTMLButtonElement).disabled)
-      console.log(`[XHS] Button: "${text}" disabled=${isDisabled}`)
+      const info = await btn.evaluate((el) => ({
+        text: el.textContent?.trim() || '',
+        disabled: (el as HTMLButtonElement).disabled,
+        visible: el.offsetParent !== null
+      }))
+      console.log(`[XHS] Button: "${info.text}" disabled=${info.disabled} visible=${info.visible}`)
 
-      if (text === '发布' || (text.includes('发布') && !text.includes('暂存') && !text.includes('定时'))) {
-        if (isDisabled) {
-          console.warn('[XHS] Publish button found but disabled')
-          continue
-        }
+      if ((info.text === '\u53d1\u5e03' || (info.text.includes('\u53d1\u5e03') && !info.text.includes('\u6682\u5b58') && !info.text.includes('\u5b9a\u65f6')))
+          && !info.disabled && info.visible) {
+        // 发布 / 暂存 / 定时
         const box = await btn.boundingBox()
         if (box) {
           await this.takeScreenshot('before_publish')
@@ -480,13 +511,13 @@ export class XiaohongshuPublisher extends BasePublisher {
       }
     }
 
-    // 备选: 查找 class 包含 publish/submit 的按钮
-    for (const sel of ['[class*="publish"] button', 'button[class*="publish"]', 'button[class*="submit"]']) {
+    // 备选
+    for (const sel of ['button[class*="publish"]', 'button[class*="submit"]']) {
       const el = await this.page.$(sel)
       if (el) {
         await this.takeScreenshot('before_publish')
         await this.behavior.humanClick(this.page, sel)
-        console.log(`[XHS] Publish button clicked via selector: ${sel}`)
+        console.log(`[XHS] Publish clicked via: ${sel}`)
         return await this.waitForPublishResult()
       }
     }
@@ -506,34 +537,30 @@ export class XiaohongshuPublisher extends BasePublisher {
         return currentUrl
       }
 
-      // 检查成功提示（弹窗或 toast）
-      const hasSuccess = await this.page.evaluate(() => {
-        const body = document.body.innerText
-        return body.includes('发布成功') || body.includes('已发布')
-      })
-      if (hasSuccess) {
-        console.log('[XHS] Publish success detected via text')
-        return this.page.url()
-      }
-
-      // 检查错误提示
-      const errorText = await this.page.evaluate(() => {
+      const result = await this.page.evaluate(() => {
+        const body = document.body.innerText || ''
+        if (body.includes('\u53d1\u5e03\u6210\u529f') || body.includes('\u5df2\u53d1\u5e03')) return 'success'
         const toasts = document.querySelectorAll('[class*="toast"], [class*="message"], [class*="notification"]')
         for (const t of toasts) {
           const text = t.textContent || ''
-          if (text.includes('失败') || text.includes('错误') || text.includes('不能')) return text.trim()
+          if (text.includes('\u5931\u8d25') || text.includes('\u9519\u8bef')) return `error:${text.trim()}`
         }
         return null
       })
-      if (errorText) {
-        throw new Error(`发布失败: ${errorText}`)
+
+      if (result === 'success') {
+        console.log('[XHS] Publish success detected')
+        return this.page.url()
+      }
+      if (result && result.startsWith('error:')) {
+        throw new Error(result.slice(6))
       }
     }
 
     const finalUrl = this.page.url()
     if (finalUrl !== startUrl) return finalUrl
 
-    console.warn('[XHS] No clear publish result after 15s')
+    console.warn('[XHS] No publish result after 15s')
     return null
   }
 
@@ -542,52 +569,53 @@ export class XiaohongshuPublisher extends BasePublisher {
   }
 
   /**
-   * 调试：打印页面中所有可交互元素的信息
+   * 调试：打印页面中所有交互元素信息
    */
   private async debugPageStructure(context: string): Promise<void> {
-    console.log(`[XHS DEBUG] === ${context} element scan ===`)
+    console.log(`[XHS DEBUG] === ${context} ===`)
 
     const info = await this.page.evaluate(() => {
-      const result: string[] = []
+      const lines: string[] = []
 
-      // 所有 input
       const inputs = document.querySelectorAll('input, textarea')
-      result.push(`--- Inputs (${inputs.length}) ---`)
+      lines.push(`--- Inputs (${inputs.length}) ---`)
       inputs.forEach((el, i) => {
-        result.push(`  [${i}] <${el.tagName.toLowerCase()}> type="${el.getAttribute('type')}" placeholder="${el.getAttribute('placeholder')}" class="${el.className?.toString().slice(0, 60)}"`)
+        lines.push(`  [${i}] <${el.tagName.toLowerCase()}> type="${el.getAttribute('type')}" placeholder="${el.getAttribute('placeholder')}" class="${(el.className || '').toString().slice(0, 80)}"`)
       })
 
-      // 所有 contenteditable
       const editables = document.querySelectorAll('[contenteditable="true"]')
-      result.push(`--- Contenteditable (${editables.length}) ---`)
+      lines.push(`--- Contenteditable (${editables.length}) ---`)
       editables.forEach((el, i) => {
         const rect = el.getBoundingClientRect()
-        result.push(`  [${i}] <${el.tagName.toLowerCase()}> placeholder="${el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''}" class="${el.className?.toString().slice(0, 60)}" size=${Math.round(rect.width)}x${Math.round(rect.height)}`)
+        lines.push(`  [${i}] <${el.tagName.toLowerCase()}> ph="${el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''}" class="${(el.className || '').toString().slice(0, 80)}" size=${Math.round(rect.width)}x${Math.round(rect.height)} text="${(el.textContent || '').slice(0, 30)}"`)
       })
 
-      // 包含"标题"或"正文"文字的元素
-      const allEls = document.querySelectorAll('[placeholder], [data-placeholder]')
-      result.push(`--- Elements with placeholder (${allEls.length}) ---`)
-      allEls.forEach((el, i) => {
+      const allPh = document.querySelectorAll('[placeholder], [data-placeholder]')
+      lines.push(`--- Elements with placeholder attr (${allPh.length}) ---`)
+      allPh.forEach((el, i) => {
         const ph = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''
-        if (ph) result.push(`  [${i}] <${el.tagName.toLowerCase()}> "${ph}" editable=${el.getAttribute('contenteditable')}`)
+        if (ph) lines.push(`  [${i}] <${el.tagName.toLowerCase()}> "${ph}" editable=${el.getAttribute('contenteditable')} class="${(el.className || '').toString().slice(0, 60)}"`)
       })
 
-      // 字数统计元素
-      result.push('--- Text containing /20 or /1000 ---')
+      // 查找 /20 和 /1000
+      lines.push('--- Text /20 /1000 ---')
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
       let node: Node | null
       while ((node = walker.nextNode())) {
         if (node.textContent && (/\/20\b/.test(node.textContent) || /\/1000/.test(node.textContent))) {
-          const parent = node.parentElement
-          result.push(`  "${node.textContent.trim()}" parent=<${parent?.tagName.toLowerCase()}> class="${parent?.className?.toString().slice(0, 60)}"`)
+          const p = node.parentElement
+          lines.push(`  "${(node.textContent || '').trim()}" parent=<${p?.tagName.toLowerCase()}> class="${(p?.className || '').toString().slice(0, 60)}"`)
         }
       }
 
-      return result.join('\n')
+      // 页面URL和标题
+      lines.push(`--- Page: ${location.href} ---`)
+      lines.push(`--- Body text (first 300 chars): ${document.body.innerText.slice(0, 300)} ---`)
+
+      return lines.join('\n')
     })
 
     console.log(info)
-    console.log(`[XHS DEBUG] === end ${context} scan ===`)
+    console.log(`[XHS DEBUG] === end ${context} ===`)
   }
 }
