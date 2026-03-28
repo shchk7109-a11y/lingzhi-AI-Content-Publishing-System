@@ -167,95 +167,52 @@ export class HumanBehaviorEngine {
    * 发布前预热：浏览小红书首页
    */
   async warmup(page: Page, intensity: 'high' | 'medium' | 'low' = 'medium'): Promise<void> {
-    const browseCount = intensity === 'high' ? 2
-      : intensity === 'medium' ? randomBetween(1, 2)
-      : randomBetween(0, 1)
+    console.log(`[HumanBehavior] Warmup (intensity=${intensity})`)
 
-    console.log(`[HumanBehavior] Warmup: browsing ${browseCount} notes (intensity=${intensity})`)
-
-    if (browseCount === 0) {
-      console.log('[HumanBehavior] Warmup skipped (mature account)')
+    if (intensity === 'low') {
+      // 成熟号：直接跳过预热
+      console.log('[HumanBehavior] Warmup skipped (mature)')
       return
     }
 
-    // 浏览首页
-    await page.goto('https://www.xiaohongshu.com/explore', {
-      waitUntil: 'domcontentloaded',
-      timeout: 20000
-    }).catch(() => { /* 可能已在首页 */ })
+    // 不跳转页面（小红书首页太重，加载要30s+），直接在当前页面模拟行为
+    // 只做简单的滚动和等待，制造基本的行为痕迹
+    try {
+      const currentUrl = page.url()
+      console.log(`[HumanBehavior] Current page: ${currentUrl}`)
 
-    await this.randomDelay(1500, 3000)
+      // 滚动浏览当前页面
+      const scrollCount = intensity === 'high' ? 3 : 2
+      await this.humanScroll(page, scrollCount)
+      await this.randomDelay(2000, 4000)
 
-    // 快速滚动首页
-    await this.humanScroll(page, randomBetween(1, 2))
-
-    // 随机点击笔记浏览
-    for (let i = 0; i < browseCount; i++) {
-      try {
-        const noteLinks = await page.$$('a[href*="/explore/"]')
-        if (noteLinks.length === 0) break
-
-        const randomIndex = randomBetween(0, Math.min(noteLinks.length - 1, 10))
-        const link = noteLinks[randomIndex]
-        const box = await link.boundingBox()
-        if (box) {
-          await this.humanClickAt(page, box.x + box.width / 2, box.y + box.height / 2)
-
-          // 停留时间大幅缩短
-          const stayTime = intensity === 'high' ? randomBetween(3000, 5000)
-            : randomBetween(2000, 4000)
-          await this.randomDelay(stayTime, stayTime + 1000)
-
-          // 快速滚动1次
-          await this.humanScroll(page, 1)
-
-          // 返回
-          await page.goBack().catch(() => {})
-          await this.randomDelay(1000, 2000)
-        }
-      } catch {
-        // 单个笔记浏览失败，继续下一个
-        await this.randomDelay(1000, 2000)
+      // 新号：多滚动一些，模拟阅读
+      if (intensity === 'high') {
+        await this.humanScroll(page, 2)
+        await this.randomDelay(3000, 5000)
       }
+    } catch (err) {
+      console.warn(`[HumanBehavior] Warmup error (ignored): ${(err as Error).message}`)
     }
 
     console.log('[HumanBehavior] Warmup completed')
   }
 
   /**
-   * 发布后冷却
+   * 发布后冷却：不跳转页面，只做短暂等待
    */
   async cooldown(page: Page): Promise<void> {
-    console.log('[HumanBehavior] Cooldown: post-publish browsing')
+    console.log('[HumanBehavior] Cooldown')
 
     try {
-      // 回到首页浏览
-      await page.goto('https://www.xiaohongshu.com/explore', {
-        waitUntil: 'domcontentloaded',
-        timeout: 15000
-      }).catch(() => {})
-
-      await this.randomDelay(2000, 5000)
-      await this.humanScroll(page, randomBetween(1, 3))
-
-      // 可能浏览1篇笔记
-      if (Math.random() < 0.5) {
-        const noteLinks = await page.$$('a[href*="/explore/"]')
-        if (noteLinks.length > 0) {
-          const link = noteLinks[randomBetween(0, Math.min(noteLinks.length - 1, 5))]
-          const box = await link.boundingBox()
-          if (box) {
-            await this.humanClickAt(page, box.x + box.width / 2, box.y + box.height / 2)
-            await this.randomDelay(3000, 8000)
-          }
-        }
-      }
+      // 在当前页面短暂停留，模拟发完帖子后的自然等待
+      await this.randomDelay(3000, 6000)
+      await this.humanScroll(page, 1)
+      await this.randomDelay(2000, 4000)
     } catch {
       // 冷却失败不影响主流程
     }
 
-    // 最后停留一会儿
-    await this.randomDelay(5000, 15000)
     console.log('[HumanBehavior] Cooldown completed')
   }
 

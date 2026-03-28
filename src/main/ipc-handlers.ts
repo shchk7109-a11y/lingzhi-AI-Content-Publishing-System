@@ -288,6 +288,30 @@ export function registerIpcHandlers(): void {
       const result = await publisher.publish(publishContent, params.accountLevel)
       console.log(`[publish:test] Publish result: success=${result.success}, error=${result.error}`)
 
+      // 写入任务记录到数据库（让Dashboard统计能看到）
+      try {
+        const now = new Date().toISOString()
+        taskDao.insert({
+          account_id: 0,
+          content_id: 0,
+          platform: 'xiaohongshu',
+          priority: 0,
+          scheduled_at: now
+        })
+        // 获取刚插入的ID（最后一个）
+        const db = getDatabase()
+        const lastId = (db.prepare('SELECT last_insert_rowid() as id').get() as { id: number }).id
+        taskDao.updateStatus(lastId, result.success ? 'success' : 'failed', {
+          started_at: now,
+          finished_at: new Date().toISOString(),
+          error_log: result.error || undefined,
+          result_url: result.url || undefined
+        })
+        console.log(`[publish:test] Task record saved: id=${lastId}`)
+      } catch (dbErr) {
+        console.warn('[publish:test] Failed to save task record:', dbErr)
+      }
+
       return result
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error)
