@@ -54,11 +54,12 @@ export class HumanBehaviorEngine {
     const breakInterval = randomBetween(15, 30)
 
     for (const char of text) {
-      // ASCII字符用 press，中文等非ASCII用 insertText
+      // ASCII可打印字符用 press，中文/空格/Emoji 用 sendCharacter
       if (isAscii(char) && char.length === 1 && char !== ' ') {
         await page.keyboard.press(char as any)
       } else {
-        await page.keyboard.insertText(char)
+        // sendCharacter 兼容性比 insertText 更好
+        await page.keyboard.sendCharacter(char)
       }
 
       charsSinceBreak++

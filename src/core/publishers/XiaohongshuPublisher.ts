@@ -276,6 +276,27 @@ export class XiaohongshuPublisher extends BasePublisher {
       throw new Error(`编辑器未加载（${timeoutMs / 1000}s超时）`)
     }
 
+    // 等待图片处理完成（旋转loading消失）
+    console.log('[XHS] Waiting for images to finish processing...')
+    try {
+      await this.page.waitForFunction(() => {
+        // 检测旋转/loading/进度条消失
+        const loading = document.querySelector(
+          '[class*="loading"], [class*="uploading"], [class*="progress"]:not([class*="complete"]), ' +
+          '[class*="rotate"], [class*="spin"], [class*="pending"]'
+        )
+        if (loading) {
+          // 确认它是图片上传相关的loading（在上传区域内）
+          const rect = loading.getBoundingClientRect()
+          if (rect.width > 0 && rect.height > 0) return false
+        }
+        return true
+      }, { timeout: 30000, polling: 2000 })
+      console.log('[XHS] Images processed')
+    } catch {
+      console.warn('[XHS] Image processing wait timeout, proceeding anyway')
+    }
+
     await this.behavior.randomDelay(2000, 3000)
 
     const info = await this.page.evaluate(() => ({
