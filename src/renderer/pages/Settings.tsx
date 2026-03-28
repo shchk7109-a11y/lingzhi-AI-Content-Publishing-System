@@ -1,11 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Button, Card, Col, Form, Input, InputNumber, Row, Switch, Select, Space, Typography, message, Tag } from 'antd'
-import { SaveOutlined, ApiOutlined, CheckCircleFilled, CloseCircleFilled, WarningOutlined } from '@ant-design/icons'
-import { Alert } from 'antd'
+import { SaveOutlined, ApiOutlined, CheckCircleFilled, CloseCircleFilled } from '@ant-design/icons'
 
 const { Title } = Typography
-
-const isElectron = !!(window as any).__ELECTRON__
 
 function Settings(): JSX.Element {
   const [form] = Form.useForm()
@@ -93,17 +90,6 @@ function Settings(): JSX.Element {
           保存设置
         </Button>
       </div>
-
-      {!isElectron && (
-        <Alert
-          message="当前在浏览器中运行，非Electron环境"
-          description="请通过 Electron 窗口使用本应用（运行 npm run dev 后会自动弹出Electron窗口）。浏览器中无法连接Bit浏览器和数据库。"
-          type="warning"
-          showIcon
-          icon={<WarningOutlined />}
-          style={{ marginBottom: 16 }}
-        />
-      )}
 
       <Form form={form} layout="vertical">
         <Row gutter={24}>

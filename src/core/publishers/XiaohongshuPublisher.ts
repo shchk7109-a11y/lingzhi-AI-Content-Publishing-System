@@ -32,85 +32,49 @@ export class XiaohongshuPublisher extends BasePublisher {
       throw new Error('需要登录：请先在Bit浏览器中手动登录小红书')
     }
 
-    // 确保在"上传图文"模式（小红书创作页有"发布笔记"和"上传视频"两个tab）
-    // 点击"发布笔记"/"上传图文"tab确保在图文模式
-    const clickedImageTab = await this.page.evaluate(() => {
-      const tabs = document.querySelectorAll('[class*="tab"], [class*="menu"] span, [class*="menu"] div, [role="tab"]')
-      for (const tab of tabs) {
-        const text = (tab.textContent || '').trim()
-        if (text.includes('\u53d1\u5e03\u7b14\u8bb0') || text.includes('\u56fe\u6587') || text.includes('\u4e0a\u4f20\u56fe\u6587')) {
-          // 发布笔记 / 图文 / 上传图文
-          ;(tab as HTMLElement).click()
+    // 确保在图文发布模式（点击"发布笔记"tab）
+    const clickedTab = await this.page.evaluate(() => {
+      // 查找tab/menu中包含"发布笔记"或"图文"的元素
+      const allClickable = document.querySelectorAll('[class*="tab"], [class*="menu-item"], [role="tab"], div[class*="creator"], span')
+      for (const el of allClickable) {
+        const text = (el.textContent || '').trim()
+        // 发布笔记 / 上传图文
+        if (text === '\u53d1\u5e03\u7b14\u8bb0' || text === '\u4e0a\u4f20\u56fe\u6587') {
+          (el as HTMLElement).click()
           return text
         }
       }
       return null
     })
-    if (clickedImageTab) {
-      console.log(`[XHS] Clicked image tab: "${clickedImageTab}"`)
+    if (clickedTab) {
+      console.log(`[XHS] Clicked tab: ${clickedTab}`)
       await this.behavior.randomDelay(1000, 2000)
-    } else {
-      console.log('[XHS] No image tab found (might already be in image mode)')
     }
 
-    // 打印所有 file input 的信息
-    const fileInputs = await this.page.evaluate(() => {
-      const inputs = document.querySelectorAll('input[type="file"]')
-      return Array.from(inputs).map((el, i) => ({
-        index: i,
-        accept: el.getAttribute('accept'),
-        multiple: el.hasAttribute('multiple'),
-        className: el.className,
-        display: getComputedStyle(el).display
-      }))
-    })
-    console.log(`[XHS] File inputs on page: ${JSON.stringify(fileInputs)}`)
-
+    // 截图记录当前页面状态
+    await this.takeScreenshot('publish_page_loaded')
     console.log('[XHS] Publish page loaded')
   }
 
+  /**
+   * 上传图片
+   * 核心策略：用 page.waitForFileChooser() 拦截文件对话框
+   * 比直接操作 input 元素更可靠
+   */
   protected async uploadMedia(paths: string[], isVideo: boolean): Promise<void> {
     if (paths.length === 0) throw new Error('没有媒体文件可上传')
 
-    console.log(`[XHS] Uploading ${paths.length} ${isVideo ? 'video' : 'image'} files...`)
-    console.log(`[XHS] File paths: ${JSON.stringify(paths)}`)
+    console.log(`[XHS] Uploading ${paths.length} files...`)
+    console.log(`[XHS] Paths: ${JSON.stringify(paths)}`)
 
-    // 查找正确的 file input（图片的，不是视频的）
-    const fileInput = await this.findImageFileInput()
-    if (!fileInput) {
-      // 打印所有input信息帮助调试
-      await this.debugPageStructure('upload-no-input')
-      throw new Error('未找到图片上传输入框（只找到视频input或无input）')
-    }
-
-    // 检查是否支持多文件
-    const hasMultiple = await fileInput.evaluate((el) => el.hasAttribute('multiple'))
-    console.log(`[XHS] Image input found, multiple=${hasMultiple}`)
-
-    if (paths.length === 1 || hasMultiple) {
-      // 单文件或支持多文件：直接上传
-      try {
-        if (!hasMultiple && paths.length > 1) {
-          // 没有multiple属性但需要传多个文件：先设置multiple
-          await fileInput.evaluate((el) => el.setAttribute('multiple', 'true'))
-          console.log('[XHS] Set multiple attribute on input')
-        }
-        await fileInput.uploadFile(...paths)
-        console.log(`[XHS] uploadFile() success: ${paths.length} files`)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error(`[XHS] uploadFile() failed: ${msg}`)
-        // 回退到逐个上传
-        if (paths.length > 1) {
-          console.log('[XHS] Falling back to single file upload...')
-          await this.uploadFilesOneByOne(paths)
-        } else {
-          throw new Error(`图片上传失败: ${msg}`)
-        }
-      }
+    // 策略1: 用 waitForFileChooser 拦截文件选择对话框
+    const uploaded = await this.uploadViaFileChooser(paths)
+    if (uploaded) {
+      console.log('[XHS] Upload via FileChooser succeeded')
     } else {
-      // 多文件且不支持multiple：逐个上传
-      await this.uploadFilesOneByOne(paths)
+      // 策略2: 直接找图片 input（可能存在但隐藏）
+      console.log('[XHS] FileChooser failed, trying direct input...')
+      await this.uploadViaInput(paths)
     }
 
     // 等待编辑器加载
@@ -118,70 +82,122 @@ export class XiaohongshuPublisher extends BasePublisher {
   }
 
   /**
-   * 查找图片上传的 file input（排除视频input）
+   * 策略1: 点击上传区域 + 拦截 FileChooser
    */
-  private async findImageFileInput() {
-    const allInputs = await this.page.$$('input[type="file"]')
-    console.log(`[XHS] Found ${allInputs.length} file inputs total`)
-
-    for (let i = 0; i < allInputs.length; i++) {
-      const info = await allInputs[i].evaluate((el) => ({
-        accept: el.getAttribute('accept') || '',
-        className: el.className
-      }))
-      console.log(`[XHS] Input[${i}]: accept="${info.accept}" class="${info.className}"`)
-
-      const accept = info.accept.toLowerCase()
-
-      // 这个input接受图片格式
-      if (accept.includes('image') || accept.includes('jpg') || accept.includes('png') || accept.includes('jpeg') || accept.includes('webp')) {
-        console.log(`[XHS] Found IMAGE input at index ${i}`)
-        return allInputs[i]
-      }
-
-      // 这个input的accept为空（通用的，也可以用）
-      if (!accept || accept === '') {
-        console.log(`[XHS] Found GENERIC input at index ${i} (no accept filter)`)
-        return allInputs[i]
-      }
-    }
-
-    // 如果所有input都是视频格式，找不到图片input
-    // 尝试：修改视频input的accept属性让它接受图片
-    if (allInputs.length > 0) {
-      console.log('[XHS] No image input found, modifying first input accept to include images')
-      await allInputs[0].evaluate((el) => {
-        el.setAttribute('accept', 'image/*,.jpg,.jpeg,.png,.webp,.gif')
-        el.setAttribute('multiple', 'true')
+  private async uploadViaFileChooser(paths: string[]): Promise<boolean> {
+    try {
+      // 找到上传区域（拖拽区/上传按钮/上传提示）
+      const uploadArea = await this.page.evaluateHandle(() => {
+        // 查找上传区域的常见模式
+        const selectors = [
+          '[class*="upload-wrapper"]',
+          '[class*="upload-area"]',
+          '[class*="drag"]',
+          '[class*="upload"] [class*="icon"]',
+          '[class*="upload"] [class*="text"]',
+          '[class*="upload-btn"]',
+        ]
+        for (const sel of selectors) {
+          const el = document.querySelector(sel)
+          if (el) return el
+        }
+        // 查找包含"上传"或"拖拽"文字的元素
+        const allDivs = document.querySelectorAll('div, span, button')
+        for (const el of allDivs) {
+          const text = (el.textContent || '').trim()
+          if ((text.includes('\u4e0a\u4f20') || text.includes('\u62d6\u62fd')) && el.getBoundingClientRect().width > 50) {
+            return el
+          }
+        }
+        return null
       })
-      return allInputs[0]
-    }
 
-    return null
+      if (!uploadArea || !uploadArea.asElement()) {
+        console.log('[XHS] No upload area found for FileChooser approach')
+        return false
+      }
+
+      const area = uploadArea.asElement()!
+      const box = await area.boundingBox()
+      if (!box) {
+        console.log('[XHS] Upload area has no bounding box')
+        return false
+      }
+
+      console.log(`[XHS] Found upload area at ${Math.round(box.x)},${Math.round(box.y)} size ${Math.round(box.width)}x${Math.round(box.height)}`)
+
+      // 同时设置 FileChooser 监听和点击
+      const [fileChooser] = await Promise.all([
+        this.page.waitForFileChooser({ timeout: 5000 }),
+        this.behavior.humanClickAt(this.page, box.x + box.width / 2, box.y + box.height / 2)
+      ])
+
+      // 通过 FileChooser 选择文件
+      await fileChooser.accept(paths)
+      console.log(`[XHS] FileChooser accepted ${paths.length} files`)
+      return true
+    } catch (err) {
+      console.log(`[XHS] FileChooser approach failed: ${(err as Error).message}`)
+      return false
+    }
   }
 
   /**
-   * 逐个上传文件
+   * 策略2: 直接通过 input 元素上传
    */
-  private async uploadFilesOneByOne(paths: string[]): Promise<void> {
-    for (let i = 0; i < paths.length; i++) {
-      console.log(`[XHS] Uploading file ${i + 1}/${paths.length}: ${paths[i]}`)
+  private async uploadViaInput(paths: string[]): Promise<void> {
+    const allInputs = await this.page.$$('input[type="file"]')
+    console.log(`[XHS] Found ${allInputs.length} file inputs`)
 
-      const fileInput = await this.findImageFileInput()
-      if (!fileInput) {
-        console.error(`[XHS] No file input for file ${i + 1}`)
+    if (allInputs.length === 0) {
+      throw new Error('页面上没有任何 file input 元素')
+    }
+
+    // 打印每个 input 信息
+    for (let i = 0; i < allInputs.length; i++) {
+      const info = await allInputs[i].evaluate(el => ({
+        accept: el.getAttribute('accept') || '(none)',
+        multiple: el.hasAttribute('multiple'),
+        class: el.className
+      }))
+      console.log(`[XHS] Input[${i}]: accept=${info.accept} multiple=${info.multiple} class=${info.class}`)
+    }
+
+    // 选择最合适的 input：优先图片类型，其次通用，最后修改视频类型
+    let targetInput = allInputs[0]
+    for (const input of allInputs) {
+      const accept = await input.evaluate(el => el.getAttribute('accept') || '')
+      if (accept.includes('image') || accept.includes('jpg') || accept.includes('png')) {
+        targetInput = input
         break
       }
-
-      try {
-        await fileInput.uploadFile(paths[i])
-        console.log(`[XHS] File ${i + 1} uploaded`)
-      } catch (err) {
-        console.error(`[XHS] File ${i + 1} upload failed:`, (err as Error).message)
+      if (!accept) {
+        targetInput = input
+        break
       }
+    }
 
-      if (i < paths.length - 1) {
-        await this.behavior.randomDelay(1500, 3000)
+    // 强制设置 accept 和 multiple
+    await targetInput.evaluate(el => {
+      el.setAttribute('accept', 'image/*,.jpg,.jpeg,.png,.webp')
+      el.setAttribute('multiple', 'true')
+    })
+
+    try {
+      await targetInput.uploadFile(...paths)
+      console.log(`[XHS] Direct input upload success: ${paths.length} files`)
+    } catch (err) {
+      // 多文件失败时逐个上传
+      console.log(`[XHS] Batch upload failed: ${(err as Error).message}, trying one by one...`)
+      for (let i = 0; i < paths.length; i++) {
+        const input = await this.page.$('input[type="file"]')
+        if (!input) break
+        await input.evaluate(el => {
+          el.setAttribute('accept', 'image/*,.jpg,.jpeg,.png,.webp')
+        })
+        await input.uploadFile(paths[i])
+        console.log(`[XHS] Single file ${i + 1}/${paths.length} uploaded`)
+        if (i < paths.length - 1) await this.behavior.randomDelay(1000, 2000)
       }
     }
   }
@@ -190,27 +206,24 @@ export class XiaohongshuPublisher extends BasePublisher {
    * 等待编辑器在上传后加载完成
    */
   private async waitForEditorAfterUpload(isVideo: boolean): Promise<void> {
-    console.log('[XHS] Waiting for editor to load after upload...')
-    const timeoutMs = isVideo ? 120000 : 60000
+    console.log('[XHS] Waiting for editor to load...')
+    const timeoutMs = isVideo ? 120000 : 45000
 
     try {
       await this.page.waitForFunction(() => {
-        const editables = document.querySelectorAll('[contenteditable="true"]')
-        if (editables.length > 0) return true
+        // 检测编辑器出现的多种信号
+        if (document.querySelectorAll('[contenteditable="true"]').length > 0) return true
         const text = document.body.innerText || ''
         if (text.includes('/20') || text.includes('/1000')) return true
-        const allPh = document.querySelectorAll('[placeholder], [data-placeholder]')
-        for (const el of allPh) {
-          const ph = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''
-          if (ph.includes('\u6807\u9898')) return true
-        }
         if (document.querySelector('[class*="title-input"], [class*="post-title"], [class*="editor"]')) return true
+        // 非 file input 的 input/textarea 出现
+        if (document.querySelectorAll('input:not([type="file"]), textarea').length > 0) return true
         return false
       }, { timeout: timeoutMs, polling: 2000 })
 
       console.log('[XHS] Editor loaded!')
     } catch {
-      console.warn('[XHS] Editor load timeout, dumping page state...')
+      console.warn('[XHS] Editor load timeout')
       await this.debugPageStructure('editor-timeout')
       await this.takeScreenshot('editor_timeout')
       throw new Error(`编辑器未加载（${timeoutMs / 1000}s超时）`)
@@ -218,510 +231,287 @@ export class XiaohongshuPublisher extends BasePublisher {
 
     await this.behavior.randomDelay(2000, 3000)
 
-    const editorInfo = await this.page.evaluate(() => {
-      const editables = document.querySelectorAll('[contenteditable="true"]')
-      const inputs = document.querySelectorAll('input:not([type="file"]), textarea')
-      return { editableCount: editables.length, inputCount: inputs.length }
-    })
-    console.log(`[XHS] Editor ready: ${JSON.stringify(editorInfo)}`)
+    const info = await this.page.evaluate(() => ({
+      editables: document.querySelectorAll('[contenteditable="true"]').length,
+      inputs: document.querySelectorAll('input:not([type="file"]), textarea').length,
+      url: location.href
+    }))
+    console.log(`[XHS] Editor state: ${JSON.stringify(info)}`)
   }
 
   /**
    * 填写标题（最多20字）
    */
   protected async inputTitle(title: string): Promise<void> {
-    const truncatedTitle = title.slice(0, 20)
-    console.log(`[XHS] Inputting title: "${truncatedTitle}"`)
+    const t = title.slice(0, 20)
+    console.log(`[XHS] Inputting title: "${t}"`)
 
-    // 先再次确认编辑器已加载
     await this.ensureEditorLoaded()
 
-    const titleEl = await this.findTitleElement()
-    if (!titleEl) {
+    const el = await this.findTitleElement()
+    if (!el) {
       await this.debugPageStructure('title')
       throw new Error('未找到标题输入元素')
     }
 
-    // 点击获取焦点
-    await titleEl.click()
+    await el.click()
     await this.behavior.randomDelay(300, 500)
-
-    // 清空已有内容
     await this.page.keyboard.down('Control')
     await this.page.keyboard.press('a')
     await this.page.keyboard.up('Control')
     await this.page.keyboard.press('Backspace')
     await this.behavior.randomDelay(200, 400)
-
-    // 输入标题
-    await this.behavior.humanTypeInPlace(this.page, truncatedTitle)
+    await this.behavior.humanTypeInPlace(this.page, t)
     await this.behavior.randomDelay(500, 1000)
-
-    console.log('[XHS] Title input done')
+    console.log('[XHS] Title done')
   }
 
-  /**
-   * 确保编辑器已加载，如未加载则等待
-   */
   private async ensureEditorLoaded(): Promise<void> {
-    const loaded = await this.page.evaluate(() => {
-      const editables = document.querySelectorAll('[contenteditable="true"]')
-      const inputs = document.querySelectorAll('input:not([type="file"]), textarea')
-      return editables.length > 0 || inputs.length > 0
-    })
-
-    if (!loaded) {
-      console.log('[XHS] Editor not ready, waiting additional 5s...')
+    const ok = await this.page.evaluate(() =>
+      document.querySelectorAll('[contenteditable="true"]').length > 0 ||
+      document.querySelectorAll('input:not([type="file"]), textarea').length > 0
+    )
+    if (!ok) {
+      console.log('[XHS] Editor not ready, extra wait...')
       try {
-        await this.page.waitForFunction(() => {
-          return document.querySelectorAll('[contenteditable="true"]').length > 0 ||
-                 document.querySelectorAll('input:not([type="file"])').length > 0
-        }, { timeout: 5000, polling: 500 })
-      } catch {
-        console.warn('[XHS] Editor still not ready after extra wait')
-      }
+        await this.page.waitForFunction(() =>
+          document.querySelectorAll('[contenteditable="true"]').length > 0 ||
+          document.querySelectorAll('input:not([type="file"]), textarea').length > 0,
+          { timeout: 10000, polling: 1000 })
+      } catch { console.warn('[XHS] Editor still not ready') }
     }
   }
 
-  /**
-   * 查找标题输入元素（5级递进策略）
-   */
   private async findTitleElement(): Promise<ElementHandle | null> {
-    // 方案1: input/textarea placeholder包含"标题"
-    for (const sel of [
-      'input[placeholder*="\u6807\u9898"]',   // 标题
-      'textarea[placeholder*="\u6807\u9898"]',
-      'input[placeholder*="\u586b\u5199\u6807\u9898"]', // 填写标题
-    ]) {
+    // 方案1: input/textarea with 标题 placeholder
+    for (const sel of ['input[placeholder*="\u6807\u9898"]', 'textarea[placeholder*="\u6807\u9898"]']) {
       const el = await this.page.$(sel)
-      if (el) {
-        console.log(`[XHS] Title found via selector: ${sel}`)
-        return el
-      }
+      if (el) { console.log(`[XHS] Title via: ${sel}`); return el }
     }
 
-    // 方案2: contenteditable 的 placeholder/data-placeholder 包含"标题"
-    const editableTitle = await this.page.evaluateHandle(() => {
-      const editables = document.querySelectorAll('[contenteditable="true"]')
-      for (const el of editables) {
+    // 方案2: contenteditable with 标题 placeholder
+    const ceTitle = await this.page.evaluateHandle(() => {
+      for (const el of document.querySelectorAll('[contenteditable="true"]')) {
         const ph = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''
-        if (ph.includes('\u6807\u9898')) return el  // 标题
-      }
-      // placeholder 子元素文字匹配
-      for (const el of editables) {
-        const phChild = el.querySelector('[class*="placeholder"], span[class*="place"]')
-        if (phChild && phChild.textContent && phChild.textContent.includes('\u6807\u9898')) return el
+        if (ph.includes('\u6807\u9898')) return el
+        const child = el.querySelector('[class*="placeholder"]')
+        if (child?.textContent?.includes('\u6807\u9898')) return el
       }
       return null
     })
-    if (editableTitle && editableTitle.asElement()) {
-      console.log('[XHS] Title found via contenteditable placeholder')
-      return editableTitle.asElement()
-    }
+    if (ceTitle?.asElement()) { console.log('[XHS] Title via contenteditable placeholder'); return ceTitle.asElement() }
 
-    // 方案3: 靠近 "/20" 字数统计的输入元素
-    const nearCount = await this.page.evaluateHandle(() => {
+    // 方案3: near /20 counter
+    const near20 = await this.page.evaluateHandle(() => {
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-      let node: Node | null
-      while ((node = walker.nextNode())) {
-        if (node.textContent && /\/20\b/.test(node.textContent)) {
-          // 从该元素向上查找最近的可编辑元素
-          let parent = node.parentElement
-          for (let i = 0; i < 15 && parent; i++) {
-            const editable = parent.querySelector('[contenteditable="true"]')
-            if (editable) return editable
-            const input = parent.querySelector('input:not([type="file"]), textarea')
-            if (input) return input
-            parent = parent.parentElement
+      let n: Node | null
+      while ((n = walker.nextNode())) {
+        if (n.textContent && /\/20\b/.test(n.textContent)) {
+          let p = n.parentElement
+          for (let i = 0; i < 15 && p; i++) {
+            const e = p.querySelector('[contenteditable="true"]') || p.querySelector('input:not([type="file"]), textarea')
+            if (e) return e
+            p = p.parentElement
           }
         }
       }
       return null
     })
-    if (nearCount && nearCount.asElement()) {
-      console.log('[XHS] Title found via proximity to /20 counter')
-      return nearCount.asElement()
+    if (near20?.asElement()) { console.log('[XHS] Title via /20 counter'); return near20.asElement() }
+
+    // 方案4: smallest contenteditable (title is shorter than body)
+    const editables = await this.page.$$('[contenteditable="true"]')
+    if (editables.length > 0) {
+      let minH = Infinity, best: ElementHandle | null = null
+      for (const e of editables) {
+        const box = await e.boundingBox()
+        if (box && box.height < minH && box.height > 10) { minH = box.height; best = e }
+      }
+      if (best) { console.log(`[XHS] Title via smallest editable (h=${minH})`); return best }
     }
 
-    // 方案4: 第一个 contenteditable（高度较小的）
-    const allEditables = await this.page.$$('[contenteditable="true"]')
-    console.log(`[XHS] Total contenteditable elements: ${allEditables.length}`)
-    if (allEditables.length > 0) {
-      // 取高度最小的 contenteditable（标题框通常比正文小）
-      let minHeight = Infinity
-      let titleCandidate: ElementHandle | null = null
-      for (const el of allEditables) {
-        const box = await el.boundingBox()
-        if (box && box.height < minHeight && box.height > 10) {
-          minHeight = box.height
-          titleCandidate = el
-        }
-      }
-      if (titleCandidate) {
-        console.log(`[XHS] Title found via smallest contenteditable (h=${minHeight}px)`)
-        return titleCandidate
-      }
+    // 方案5: class title
+    for (const s of ['[class*="title"] input', '[class*="title"] [contenteditable="true"]', '[class*="title"][contenteditable="true"]']) {
+      const el = await this.page.$(s)
+      if (el) { console.log(`[XHS] Title via: ${s}`); return el }
     }
-
-    // 方案5: class包含title的元素
-    for (const sel of [
-      '[class*="title"] input',
-      '[class*="title"] [contenteditable="true"]',
-      '[class*="title"][contenteditable="true"]',
-      '[class*="post-title"]',
-    ]) {
-      const el = await this.page.$(sel)
-      if (el) {
-        console.log(`[XHS] Title found via class selector: ${sel}`)
-        return el
-      }
-    }
-
     return null
   }
 
-  /**
-   * 填写正文
-   */
   protected async inputContent(content: string): Promise<void> {
     console.log(`[XHS] Inputting content (${content.length} chars)`)
-
-    const contentEl = await this.findContentElement()
-    if (!contentEl) {
-      await this.debugPageStructure('content')
-      throw new Error('未找到正文输入元素')
-    }
-
-    await contentEl.click()
+    const el = await this.findContentElement()
+    if (!el) { await this.debugPageStructure('content'); throw new Error('未找到正文输入元素') }
+    await el.click()
     await this.behavior.randomDelay(300, 600)
     await this.behavior.humanTypeInPlace(this.page, content)
     await this.behavior.randomDelay(500, 1000)
-
-    console.log('[XHS] Content input done')
+    console.log('[XHS] Content done')
   }
 
-  /**
-   * 查找正文输入元素
-   */
   private async findContentElement(): Promise<ElementHandle | null> {
-    // 方案1: placeholder 包含"正文"或"描述"
-    const byPlaceholder = await this.page.evaluateHandle(() => {
-      const editables = document.querySelectorAll('[contenteditable="true"]')
-      for (const el of editables) {
+    // 方案1: placeholder 含 正文/描述
+    const byPh = await this.page.evaluateHandle(() => {
+      for (const el of document.querySelectorAll('[contenteditable="true"]')) {
         const ph = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''
-        if (ph.includes('\u6b63\u6587') || ph.includes('\u63cf\u8ff0') || ph.includes('\u8f93\u5165\u6b63\u6587')) return el
-        // 正文 / 描述 / 输入正文
-      }
-      for (const el of editables) {
-        const phChild = el.querySelector('[class*="placeholder"], span[class*="place"]')
-        if (phChild) {
-          const t = phChild.textContent || ''
-          if (t.includes('\u6b63\u6587') || t.includes('\u63cf\u8ff0')) return el
-        }
+        if (ph.includes('\u6b63\u6587') || ph.includes('\u63cf\u8ff0')) return el
+        const child = el.querySelector('[class*="placeholder"]')
+        if (child?.textContent?.includes('\u6b63\u6587') || child?.textContent?.includes('\u63cf\u8ff0')) return el
       }
       return null
     })
-    if (byPlaceholder && byPlaceholder.asElement()) {
-      console.log('[XHS] Content found via placeholder')
-      return byPlaceholder.asElement()
-    }
+    if (byPh?.asElement()) { console.log('[XHS] Content via placeholder'); return byPh.asElement() }
 
-    // 方案2: 靠近 "/1000" 的可编辑元素
-    const nearCount = await this.page.evaluateHandle(() => {
+    // 方案2: near /1000
+    const near1000 = await this.page.evaluateHandle(() => {
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-      let node: Node | null
-      while ((node = walker.nextNode())) {
-        if (node.textContent && /\/1000/.test(node.textContent)) {
-          let parent = node.parentElement
-          for (let i = 0; i < 15 && parent; i++) {
-            const editable = parent.querySelector('[contenteditable="true"]')
-            if (editable) return editable
-            parent = parent.parentElement
+      let n: Node | null
+      while ((n = walker.nextNode())) {
+        if (n.textContent && /\/1000/.test(n.textContent)) {
+          let p = n.parentElement
+          for (let i = 0; i < 15 && p; i++) {
+            const e = p.querySelector('[contenteditable="true"]')
+            if (e) return e
+            p = p.parentElement
           }
         }
       }
       return null
     })
-    if (nearCount && nearCount.asElement()) {
-      console.log('[XHS] Content found via /1000 counter')
-      return nearCount.asElement()
-    }
+    if (near1000?.asElement()) { console.log('[XHS] Content via /1000'); return near1000.asElement() }
 
-    // 方案3: 编辑器类选择器
-    for (const sel of ['.ql-editor', '#post-content', '[class*="editor"][contenteditable]']) {
-      const el = await this.page.$(sel)
-      if (el) {
-        console.log(`[XHS] Content found via: ${sel}`)
-        return el
-      }
-    }
-
-    // 方案4: contenteditable 中高度最大的
+    // 方案3: largest contenteditable
     const editables = await this.page.$$('[contenteditable="true"]')
-    console.log(`[XHS] Total editables for content search: ${editables.length}`)
     if (editables.length >= 2) {
-      let maxHeight = 0
-      let bestEl: ElementHandle | null = null
-      for (const el of editables) {
-        const box = await el.boundingBox()
-        if (box && box.height > maxHeight) {
-          maxHeight = box.height
-          bestEl = el
-        }
+      let maxH = 0, best: ElementHandle | null = null
+      for (const e of editables) {
+        const box = await e.boundingBox()
+        if (box && box.height > maxH) { maxH = box.height; best = e }
       }
-      if (bestEl) {
-        console.log(`[XHS] Content found via largest contenteditable (h=${maxHeight}px)`)
-        return bestEl
-      }
+      if (best) { console.log(`[XHS] Content via largest editable (h=${maxH})`); return best }
+      return editables[1]
     }
-    // 只有1个时也试试（可能标题和正文是同一种容器的不同区域）
-    if (editables.length === 1) {
-      console.log('[XHS] Only 1 contenteditable, using it for content')
-      return editables[0]
-    }
-
+    if (editables.length === 1) return editables[0]
     return null
   }
 
-  /**
-   * 添加话题标签
-   */
   protected async addTags(tags: string[]): Promise<void> {
-    const limitedTags = tags.slice(0, 5)
-    if (limitedTags.length === 0) return
+    const t = tags.slice(0, 5)
+    if (t.length === 0) return
+    console.log(`[XHS] Adding ${t.length} tags`)
 
-    console.log(`[XHS] Adding ${limitedTags.length} tags`)
-
-    for (const tag of limitedTags) {
+    for (const tag of t) {
       try {
-        // 找"# 话题"按钮并点击
-        const topicBtn = await this.findTopicButton()
-        if (topicBtn) {
-          await topicBtn.click()
+        const btn = await this.findTopicButton()
+        if (btn) {
+          await btn.click()
           await this.behavior.randomDelay(500, 800)
-
-          // 等待输入框出现并输入
-          const topicInput = await this.page.evaluateHandle(() => {
-            const active = document.activeElement
-            if (active && (active.tagName === 'INPUT' || active.getAttribute('contenteditable'))) return active
-            const inputs = document.querySelectorAll('input[placeholder*="\u641c\u7d22"], input[placeholder*="\u8bdd\u9898"], input[type="search"]')
-            if (inputs.length > 0) return inputs[inputs.length - 1]
-            return null
-          })
-
-          if (topicInput && topicInput.asElement()) {
-            await topicInput.asElement()!.click()
-            await this.behavior.randomDelay(200, 400)
-            await this.behavior.humanTypeInPlace(this.page, tag)
-          } else {
-            await this.behavior.humanTypeInPlace(this.page, tag)
-          }
+          // 在当前聚焦的输入中打字
+          await this.behavior.humanTypeInPlace(this.page, tag)
+          await this.behavior.randomDelay(800, 1500)
+          const clicked = await this.clickFirstSuggestion()
+          if (!clicked) await this.page.keyboard.press('Enter')
+          console.log(`[XHS] Tag "${tag}" added`)
         } else {
-          // 在正文末尾追加 #tag
-          console.log(`[XHS] Topic button not found, appending #${tag}`)
+          // 在正文末尾追加
           await this.page.keyboard.press('End')
           await this.page.keyboard.insertText(` #${tag}`)
-          await this.behavior.randomDelay(300, 500)
-          continue
+          console.log(`[XHS] Tag "${tag}" appended to content`)
         }
-
-        await this.behavior.randomDelay(800, 1500)
-
-        // 等待建议列表并点击
-        const clicked = await this.clickFirstSuggestion()
-        if (!clicked) {
-          await this.page.keyboard.press('Enter')
-          console.log(`[XHS] Tag "${tag}" confirmed via Enter`)
-        } else {
-          console.log(`[XHS] Tag "${tag}" selected from suggestions`)
-        }
-
         await this.behavior.randomDelay(500, 800)
-      } catch (error) {
-        console.warn(`[XHS] Failed to add tag "${tag}":`, (error as Error).message)
-      }
+      } catch (e) { console.warn(`[XHS] Tag "${tag}" failed: ${(e as Error).message}`) }
     }
   }
 
   private async findTopicButton(): Promise<ElementHandle | null> {
     const btn = await this.page.evaluateHandle(() => {
-      // 遍历所有可点击元素找"话题"文字
-      const candidates = document.querySelectorAll('button, [role="button"], span, div')
-      for (const el of candidates) {
+      for (const el of document.querySelectorAll('button, [role="button"], span, div')) {
         const text = (el.textContent || '').trim()
         if ((text === '#' || text === '# \u8bdd\u9898' || text === '#\u8bdd\u9898' || text.includes('\u8bdd\u9898'))
-            && el.getBoundingClientRect().width < 200) {
-          return el
-        }
+            && el.getBoundingClientRect().width < 200 && el.getBoundingClientRect().width > 10) return el
       }
       return null
     })
-    if (btn && btn.asElement()) {
-      console.log('[XHS] Topic button found')
-      return btn.asElement()
-    }
-    return null
+    return btn?.asElement() || null
   }
 
   private async clickFirstSuggestion(): Promise<boolean> {
     for (let i = 0; i < 6; i++) {
       await this.behavior.randomDelay(400, 600)
-      const suggestion = await this.page.evaluateHandle(() => {
-        const selectors = [
-          '[class*="suggestion"] li', '[class*="topic-item"]',
-          '[class*="search-result"] [class*="item"]', '[class*="dropdown"] [class*="option"]',
-          '[class*="hashtag-list"] [class*="item"]', '[class*="topic-list"] > div',
-          '[class*="result-list"] > div',
-        ]
-        for (const sel of selectors) {
+      const s = await this.page.evaluateHandle(() => {
+        for (const sel of ['[class*="suggestion"] li', '[class*="topic-item"]', '[class*="search-result"] [class*="item"]', '[class*="dropdown"] [class*="option"]', '[class*="topic-list"] > div']) {
           const items = document.querySelectorAll(sel)
           if (items.length > 0) return items[0]
         }
         return null
       })
-      if (suggestion && suggestion.asElement()) {
-        await suggestion.asElement()!.click()
-        return true
-      }
+      if (s?.asElement()) { await s.asElement()!.click(); return true }
     }
     return false
   }
 
-  /**
-   * 点击发布按钮
-   */
   protected async clickPublish(): Promise<string | null> {
     console.log('[XHS] Looking for publish button...')
-
     const buttons = await this.page.$$('button')
-    console.log(`[XHS] Found ${buttons.length} buttons`)
-
     for (const btn of buttons) {
-      const info = await btn.evaluate((el) => ({
+      const info = await btn.evaluate(el => ({
         text: el.textContent?.trim() || '',
         disabled: (el as HTMLButtonElement).disabled,
         visible: el.offsetParent !== null
       }))
-      console.log(`[XHS] Button: "${info.text}" disabled=${info.disabled} visible=${info.visible}`)
-
       if ((info.text === '\u53d1\u5e03' || (info.text.includes('\u53d1\u5e03') && !info.text.includes('\u6682\u5b58') && !info.text.includes('\u5b9a\u65f6')))
           && !info.disabled && info.visible) {
-        // 发布 / 暂存 / 定时
         const box = await btn.boundingBox()
         if (box) {
           await this.takeScreenshot('before_publish')
           await this.behavior.humanClickAt(this.page, box.x + box.width / 2, box.y + box.height / 2)
-          console.log('[XHS] Publish button clicked')
+          console.log('[XHS] Publish clicked')
           return await this.waitForPublishResult()
         }
       }
     }
-
-    // 备选
-    for (const sel of ['button[class*="publish"]', 'button[class*="submit"]']) {
-      const el = await this.page.$(sel)
-      if (el) {
-        await this.takeScreenshot('before_publish')
-        await this.behavior.humanClick(this.page, sel)
-        console.log(`[XHS] Publish clicked via: ${sel}`)
-        return await this.waitForPublishResult()
-      }
-    }
-
     throw new Error('未找到发布按钮')
   }
 
   private async waitForPublishResult(): Promise<string | null> {
     const startUrl = this.page.url()
-
     for (let i = 0; i < 30; i++) {
       await this.behavior.randomDelay(400, 600)
-
-      const currentUrl = this.page.url()
-      if (currentUrl !== startUrl && currentUrl.includes('xiaohongshu.com')) {
-        console.log(`[XHS] Publish success! URL: ${currentUrl}`)
-        return currentUrl
-      }
-
-      const result = await this.page.evaluate(() => {
-        const body = document.body.innerText || ''
-        if (body.includes('\u53d1\u5e03\u6210\u529f') || body.includes('\u5df2\u53d1\u5e03')) return 'success'
-        const toasts = document.querySelectorAll('[class*="toast"], [class*="message"], [class*="notification"]')
-        for (const t of toasts) {
-          const text = t.textContent || ''
-          if (text.includes('\u5931\u8d25') || text.includes('\u9519\u8bef')) return `error:${text.trim()}`
+      const url = this.page.url()
+      if (url !== startUrl && url.includes('xiaohongshu.com')) return url
+      const r = await this.page.evaluate(() => {
+        const t = document.body.innerText || ''
+        if (t.includes('\u53d1\u5e03\u6210\u529f') || t.includes('\u5df2\u53d1\u5e03')) return 'ok'
+        for (const el of document.querySelectorAll('[class*="toast"], [class*="message"]')) {
+          const s = el.textContent || ''
+          if (s.includes('\u5931\u8d25') || s.includes('\u9519\u8bef')) return `err:${s.trim()}`
         }
         return null
       })
-
-      if (result === 'success') {
-        console.log('[XHS] Publish success detected')
-        return this.page.url()
-      }
-      if (result && result.startsWith('error:')) {
-        throw new Error(result.slice(6))
-      }
+      if (r === 'ok') return this.page.url()
+      if (r?.startsWith('err:')) throw new Error(r.slice(4))
     }
-
-    const finalUrl = this.page.url()
-    if (finalUrl !== startUrl) return finalUrl
-
-    console.warn('[XHS] No publish result after 15s')
-    return null
+    return this.page.url() !== startUrl ? this.page.url() : null
   }
 
   protected async cooldown(): Promise<void> {
     await this.behavior.cooldown(this.page)
   }
 
-  /**
-   * 调试：打印页面中所有交互元素信息
-   */
-  private async debugPageStructure(context: string): Promise<void> {
-    console.log(`[XHS DEBUG] === ${context} ===`)
-
+  private async debugPageStructure(ctx: string): Promise<void> {
+    console.log(`[XHS DEBUG] === ${ctx} ===`)
     const info = await this.page.evaluate(() => {
       const lines: string[] = []
-
       const inputs = document.querySelectorAll('input, textarea')
       lines.push(`--- Inputs (${inputs.length}) ---`)
-      inputs.forEach((el, i) => {
-        lines.push(`  [${i}] <${el.tagName.toLowerCase()}> type="${el.getAttribute('type')}" placeholder="${el.getAttribute('placeholder')}" class="${(el.className || '').toString().slice(0, 80)}"`)
-      })
-
-      const editables = document.querySelectorAll('[contenteditable="true"]')
-      lines.push(`--- Contenteditable (${editables.length}) ---`)
-      editables.forEach((el, i) => {
-        const rect = el.getBoundingClientRect()
-        lines.push(`  [${i}] <${el.tagName.toLowerCase()}> ph="${el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''}" class="${(el.className || '').toString().slice(0, 80)}" size=${Math.round(rect.width)}x${Math.round(rect.height)} text="${(el.textContent || '').slice(0, 30)}"`)
-      })
-
-      const allPh = document.querySelectorAll('[placeholder], [data-placeholder]')
-      lines.push(`--- Elements with placeholder attr (${allPh.length}) ---`)
-      allPh.forEach((el, i) => {
-        const ph = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''
-        if (ph) lines.push(`  [${i}] <${el.tagName.toLowerCase()}> "${ph}" editable=${el.getAttribute('contenteditable')} class="${(el.className || '').toString().slice(0, 60)}"`)
-      })
-
-      // 查找 /20 和 /1000
-      lines.push('--- Text /20 /1000 ---')
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-      let node: Node | null
-      while ((node = walker.nextNode())) {
-        if (node.textContent && (/\/20\b/.test(node.textContent) || /\/1000/.test(node.textContent))) {
-          const p = node.parentElement
-          lines.push(`  "${(node.textContent || '').trim()}" parent=<${p?.tagName.toLowerCase()}> class="${(p?.className || '').toString().slice(0, 60)}"`)
-        }
-      }
-
-      // 页面URL和标题
+      inputs.forEach((el, i) => lines.push(`  [${i}] <${el.tagName.toLowerCase()}> type="${el.getAttribute('type')}" ph="${el.getAttribute('placeholder')}" class="${(el.className || '').toString().slice(0, 80)}"`))
+      const eds = document.querySelectorAll('[contenteditable="true"]')
+      lines.push(`--- Contenteditable (${eds.length}) ---`)
+      eds.forEach((el, i) => { const r = el.getBoundingClientRect(); lines.push(`  [${i}] ph="${el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || ''}" ${Math.round(r.width)}x${Math.round(r.height)} class="${(el.className || '').toString().slice(0, 80)}"`) })
       lines.push(`--- Page: ${location.href} ---`)
-      lines.push(`--- Body text (first 300 chars): ${document.body.innerText.slice(0, 300)} ---`)
-
       return lines.join('\n')
     })
-
     console.log(info)
-    console.log(`[XHS DEBUG] === end ${context} ===`)
+    console.log(`[XHS DEBUG] === end ${ctx} ===`)
   }
 }
