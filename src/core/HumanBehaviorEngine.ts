@@ -170,30 +170,15 @@ export class HumanBehaviorEngine {
     console.log(`[HumanBehavior] Warmup (intensity=${intensity})`)
 
     if (intensity === 'low') {
-      // 成熟号：直接跳过预热
       console.log('[HumanBehavior] Warmup skipped (mature)')
       return
     }
 
-    // 不跳转页面（小红书首页太重，加载要30s+），直接在当前页面模拟行为
-    // 只做简单的滚动和等待，制造基本的行为痕迹
-    try {
-      const currentUrl = page.url()
-      console.log(`[HumanBehavior] Current page: ${currentUrl}`)
-
-      // 滚动浏览当前页面
-      const scrollCount = intensity === 'high' ? 3 : 2
-      await this.humanScroll(page, scrollCount)
-      await this.randomDelay(2000, 4000)
-
-      // 新号：多滚动一些，模拟阅读
-      if (intensity === 'high') {
-        await this.humanScroll(page, 2)
-        await this.randomDelay(3000, 5000)
-      }
-    } catch (err) {
-      console.warn(`[HumanBehavior] Warmup error (ignored): ${(err as Error).message}`)
-    }
+    // 纯等待式预热 — 不做任何DOM操作（避免dispatchMouseEvent超时）
+    // 只是在页面上停留一段时间，制造访问时长痕迹
+    const waitMs = intensity === 'high' ? 8000 : 5000
+    console.log(`[HumanBehavior] Waiting ${waitMs}ms as warmup...`)
+    await this.randomDelay(waitMs, waitMs + 3000)
 
     console.log('[HumanBehavior] Warmup completed')
   }

@@ -1,7 +1,7 @@
 // 默认系统设置
 export const DEFAULT_SETTINGS = {
   bitApiUrl: 'http://127.0.0.1',
-  bitApiPort: 54345,
+  bitApiPort: 54400,
   bitApiToken: '',
   maxConcurrency: 3,
   defaultProxy: null,

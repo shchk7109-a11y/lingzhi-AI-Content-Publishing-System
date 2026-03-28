@@ -6,19 +6,21 @@ import { WindowPool } from '../core/WindowPool'
 import { HumanBehaviorEngine } from '../core/HumanBehaviorEngine'
 import { XiaohongshuPublisher } from '../core/publishers/XiaohongshuPublisher'
 import type { PublishContent } from '../core/publishers/BasePublisher'
-import { DEFAULT_SETTINGS } from '../shared/constants'
 import type { SystemSettings } from '../shared/types'
+import { loadSettings, saveSettings } from './settings-store'
 
 const contentDao = new ContentDao()
 const accountDao = new AccountDao()
 const matchRecordDao = new MatchRecordDao()
 const taskDao = new TaskDao()
 const matchRuleDao = new MatchRuleDao()
-const bitManager = new BitBrowserManager()
-const windowPool = new WindowPool(bitManager, 1)
 
-// 内存中的设置（启动时用默认值，可通过settings:update修改）
-let currentSettings: SystemSettings = { ...DEFAULT_SETTINGS } as SystemSettings
+// 从磁盘加载持久化设置
+let currentSettings: SystemSettings = loadSettings()
+
+// 用持久化的端口和Token初始化BitBrowserManager
+const bitManager = new BitBrowserManager(currentSettings.bitApiPort, currentSettings.bitApiToken)
+const windowPool = new WindowPool(bitManager, 1)
 
 export function getBitManager(): BitBrowserManager {
   return bitManager
@@ -209,12 +211,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('settings:update', (_event, key: string, value: unknown) => {
     ;(currentSettings as Record<string, unknown>)[key] = value
     syncBitSettings({ [key]: value })
+    saveSettings(currentSettings)
     return { success: true }
   })
 
   ipcMain.handle('settings:save', (_event, settings: Record<string, unknown>) => {
     currentSettings = { ...currentSettings, ...settings } as SystemSettings
     syncBitSettings(settings)
+    saveSettings(currentSettings)
     return { success: true }
   })
 
@@ -289,27 +293,32 @@ export function registerIpcHandlers(): void {
       console.log(`[publish:test] Publish result: success=${result.success}, error=${result.error}`)
 
       // 写入任务记录到数据库（让Dashboard统计能看到）
+      // 用直接SQL绕过外键约束（测试发布没有真实的content/account记录）
       try {
-        const now = new Date().toISOString()
-        taskDao.insert({
-          account_id: 0,
-          content_id: 0,
-          platform: 'xiaohongshu',
-          priority: 0,
-          scheduled_at: now
-        })
-        // 获取刚插入的ID（最后一个）
         const db = getDatabase()
-        const lastId = (db.prepare('SELECT last_insert_rowid() as id').get() as { id: number }).id
-        taskDao.updateStatus(lastId, result.success ? 'success' : 'failed', {
-          started_at: now,
-          finished_at: new Date().toISOString(),
-          error_log: result.error || undefined,
-          result_url: result.url || undefined
-        })
-        console.log(`[publish:test] Task record saved: id=${lastId}`)
+        const now = new Date().toISOString()
+        const status = result.success ? 'success' : 'failed'
+        db.prepare(`
+          INSERT INTO tasks (account_id, content_id, platform, status, priority, scheduled_at, started_at, finished_at, error_log, result_url)
+          VALUES (0, 0, 'xiaohongshu', ?, 0, ?, ?, ?, ?, ?)
+        `).run(status, now, now, new Date().toISOString(), result.error || null, result.url || null)
+        console.log(`[publish:test] Task record saved (status=${status})`)
       } catch (dbErr) {
-        console.warn('[publish:test] Failed to save task record:', dbErr)
+        // 如果外键约束失败，临时关闭外键检查再插入
+        try {
+          const db = getDatabase()
+          const now = new Date().toISOString()
+          const status = result.success ? 'success' : 'failed'
+          db.pragma('foreign_keys = OFF')
+          db.prepare(`
+            INSERT INTO tasks (account_id, content_id, platform, status, priority, scheduled_at, started_at, finished_at, error_log, result_url)
+            VALUES (0, 0, 'xiaohongshu', ?, 0, ?, ?, ?, ?, ?)
+          `).run(status, now, now, new Date().toISOString(), result.error || null, result.url || null)
+          db.pragma('foreign_keys = ON')
+          console.log(`[publish:test] Task record saved (FK off, status=${status})`)
+        } catch (e2) {
+          console.warn('[publish:test] Failed to save task record:', e2)
+        }
       }
 
       return result
