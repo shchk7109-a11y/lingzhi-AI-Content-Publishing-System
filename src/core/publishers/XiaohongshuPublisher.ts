@@ -14,9 +14,10 @@ export class XiaohongshuPublisher extends BasePublisher {
   }
 
   protected async navigateToPublish(): Promise<void> {
-    console.log('[XHS] Navigating to publish page...')
+    console.log('[XHS] Navigating to publish page (image mode)...')
 
-    await this.page.goto('https://creator.xiaohongshu.com/publish/publish', {
+    // 直接用 target=image 参数打开图文上传页
+    await this.page.goto('https://creator.xiaohongshu.com/publish/publish?from=menu&target=image', {
       waitUntil: 'networkidle2',
       timeout: 30000
     })
@@ -32,27 +33,72 @@ export class XiaohongshuPublisher extends BasePublisher {
       throw new Error('需要登录：请先在Bit浏览器中手动登录小红书')
     }
 
-    // 确保在图文发布模式（点击"发布笔记"tab）
-    const clickedTab = await this.page.evaluate(() => {
-      // 查找tab/menu中包含"发布笔记"或"图文"的元素
-      const allClickable = document.querySelectorAll('[class*="tab"], [class*="menu-item"], [role="tab"], div[class*="creator"], span')
-      for (const el of allClickable) {
-        const text = (el.textContent || '').trim()
-        // 发布笔记 / 上传图文
-        if (text === '\u53d1\u5e03\u7b14\u8bb0' || text === '\u4e0a\u4f20\u56fe\u6587') {
-          (el as HTMLElement).click()
-          return text
-        }
+    // 备选：如果URL参数没生效，手动点击"上传图文"标签
+    const currentUrl = this.page.url()
+    console.log(`[XHS] Current URL: ${currentUrl}`)
+
+    const isImageMode = await this.page.evaluate(() => {
+      // 检查当前激活的tab是否是图文
+      const activeTabs = document.querySelectorAll('[class*="active"], [aria-selected="true"]')
+      for (const tab of activeTabs) {
+        const text = (tab.textContent || '').trim()
+        if (text.includes('\u56fe\u6587')) return true  // 图文
       }
-      return null
+      // 检查页面是否有图片相关的上传区域（不是纯视频上传）
+      const inputs = document.querySelectorAll('input[type="file"]')
+      for (const inp of inputs) {
+        const accept = inp.getAttribute('accept') || ''
+        if (accept.includes('image') || accept.includes('jpg') || accept.includes('png')) return true
+      }
+      // 检查上传区域是否提示"拖拽/点击上传图片"
+      const bodyText = document.body.innerText || ''
+      if (bodyText.includes('\u56fe\u7247') || bodyText.includes('\u62d6\u62fd\u56fe\u7247')) return true  // 图片 / 拖拽图片
+      return false
     })
-    if (clickedTab) {
-      console.log(`[XHS] Clicked tab: ${clickedTab}`)
-      await this.behavior.randomDelay(1000, 2000)
+
+    if (!isImageMode) {
+      console.log('[XHS] Not in image mode, clicking image tab...')
+      const clicked = await this.page.evaluate(() => {
+        // 查找所有可能的tab元素，点击包含"图文"的那个
+        const candidates = document.querySelectorAll('div, span, a, button, li')
+        for (const el of candidates) {
+          const text = (el.textContent || '').trim()
+          const rect = el.getBoundingClientRect()
+          // "上传图文" 且是较小的可点击元素（不是整个容器）
+          if (text.includes('\u56fe\u6587') && rect.width > 20 && rect.width < 300 && rect.height > 10 && rect.height < 80) {
+            (el as HTMLElement).click()
+            return text
+          }
+        }
+        return null
+      })
+
+      if (clicked) {
+        console.log(`[XHS] Clicked image tab: ${clicked}`)
+        await this.behavior.randomDelay(1500, 2500)
+      } else {
+        console.warn('[XHS] Could not find image tab to click')
+      }
+    } else {
+      console.log('[XHS] Already in image mode')
     }
 
-    // 截图记录当前页面状态
-    await this.takeScreenshot('publish_page_loaded')
+    // 等待图文上传区域出现
+    await this.takeScreenshot('after_tab_switch')
+
+    // 打印当前页面所有 file input 信息
+    const fileInputs = await this.page.evaluate(() => {
+      const inputs = document.querySelectorAll('input[type="file"]')
+      return Array.from(inputs).map((el, i) => ({
+        i,
+        accept: el.getAttribute('accept') || '(none)',
+        multiple: el.hasAttribute('multiple'),
+        cls: el.className
+      }))
+    })
+    console.log(`[XHS] File inputs: ${JSON.stringify(fileInputs)}`)
+
+    console.log('[XHS] Publish page ready')
     console.log('[XHS] Publish page loaded')
   }
 
@@ -65,7 +111,8 @@ export class XiaohongshuPublisher extends BasePublisher {
     if (paths.length === 0) throw new Error('没有媒体文件可上传')
 
     console.log(`[XHS] Uploading ${paths.length} files...`)
-    console.log(`[XHS] Paths: ${JSON.stringify(paths)}`)
+    // 路径可能有中文，逐条打印避免编码问题
+    paths.forEach((p, i) => console.log(`[XHS]   File[${i}]: ${p}`))
 
     // 策略1: 用 waitForFileChooser 拦截文件选择对话框
     const uploaded = await this.uploadViaFileChooser(paths)
