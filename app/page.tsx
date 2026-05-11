@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { Step1Pillars, PillarItem } from "@/components/pipeline/step-1-pillars"
-import { Step2Matrix, MatrixRow } from "@/components/pipeline/step-2-matrix"
+import { Step2Matrix, MatrixRow, StoreFormat } from "@/components/pipeline/step-2-matrix"
 import { Step3Topics, TopicWithContext } from "@/components/pipeline/step-3-topics"
 import { Step4Scripts } from "@/components/pipeline/step-4-scripts"
 import { useAuth } from "@/components/auth-provider"
@@ -35,8 +35,10 @@ export default function Home() {
     setSelectedCategory(category || 'brand')
     setCurrentStep(2)
   }
-  const handleMatrixConfirmed = (newMatrix: MatrixRow[]) => {
+  const [storeFormat, setStoreFormat] = React.useState<string>('')
+  const handleMatrixConfirmed = (newMatrix: MatrixRow[], newStoreFormat?: string) => {
     setMatrix(newMatrix)
+    setStoreFormat(newStoreFormat || '')
     setCurrentStep(3)
   }
   const handleTopicsConfirmed = (selectedTopics: TopicWithContext[], platform: Platform) => {
@@ -217,7 +219,7 @@ export default function Home() {
             <Step2Matrix pillars={pillars} mode={pillarMode as any} productId={pillarProductId} category={selectedCategory} onConfirm={handleMatrixConfirmed} onBack={handleBack} />
           )}
           {currentStep === 3 && (
-            <Step3Topics matrix={matrix} onConfirm={handleTopicsConfirmed} onBack={handleBack} />
+            <Step3Topics matrix={matrix} storeFormat={storeFormat as any} onConfirm={handleTopicsConfirmed} onBack={handleBack} />
           )}
           {currentStep === 4 && (
             <Step4Scripts topics={topics} platform={selectedPlatform} onBack={handleBack} onRestart={handleRestart} />

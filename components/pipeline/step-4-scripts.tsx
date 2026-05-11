@@ -320,6 +320,8 @@ export function Step4Scripts({ topics, platform, onBack, onRestart }: Step4Scrip
             pillar_name: topicCtx.pillar_name,
             content_type: topicCtx.content_type,
             strategy_explanation: topicCtx.strategy_explanation,
+            store_format: topicCtx.store_format || '',
+            grid_position: topicCtx.grid_position || '',
           });
         })(),
       })

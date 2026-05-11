@@ -9,11 +9,37 @@ const BRAND_GENERAL_PERSONAS = `都市健康消费人群（三类核心画像）
 2. 精致妈妈/女性精英（30-40岁）：注重气色与抗老，对成分敏感，追求"内调外养"。痛点：气色差、睡眠浅、精力不足，但不想吃药。
 3. 银发新青年/健康前瞻者（40-55岁）：主动管理健康，认可传统草本价值，对技术背书有较高信任需求。痛点：慢性疲劳、免疫力下降，寻找有科学依据的养生方案。`;
 
+// 三业态定义
+const STORE_FORMAT_CONTEXT: Record<string, string> = {
+  community: `【当前业态：灵芝水铺·社区店】
+心智锚点：家门口的灵芝水站
+核心人群：社区居民、宝妈、银发族、日常养生人群
+内容调性：邻里温度 × 日常陪伴 × 复购驱动
+场景关键词：晨起一杯、接娃顺路、邻居推荐、日常养生、四季调理
+差异化：强调"每天一杯"的日常感，弱化仪式感，突出便利性和性价比`,
+
+  scenic: `【当前业态：灵云小院·景区店】
+心智锚点：可以喝的非遗文化馆
+核心人群：游客、文旅爱好者、打卡达人、亲子家庭
+内容调性：文化体验 × 视觉冲击 × 传播裂变
+场景关键词：古风庭院、非遗体验、旅行打卡、伴手礼、文化故事
+差异化：强调"体验感"和"出片率"，突出文化深度和视觉美学`,
+
+  business: `【当前业态：葫芦里卖什么·商务区店】
+心智锚点：打工人的草本能量站
+核心人群：写字楼白领、互联网从业者、加班族、商务人士
+内容调性：效率养生 × 职场共鸣 × 即时转化
+场景关键词：早八续命、下午茶替代、加班回血、会议提神、工位养生
+差异化：强调"效率"和"即时感"，用职场语言包装养生概念`,
+};
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { pillars, mode = 'brand', productId } = body;
     const category = body.category || 'brand';
+    const store_format = body.store_format || 'community';
+    const matrix_mode = body.matrix_mode || '3h';
 
     if (!pillars || !Array.isArray(pillars) || pillars.length !== 3) {
       return NextResponse.json(
@@ -93,22 +119,53 @@ ${kb.products.map(p => `- ${p.name}：${p.function}`).join('\n')}`;
     const pillar3 = parsePillar(pillars[2]);
 
     // ==========================================
-    // 4. 填充提示词占位符
+    // 4. 构建提示词（区分3H模式和经典模式）
     // ==========================================
-    const systemPrompt = prompts.matrix_system;
-    const userPrompt = (prompts.matrix_user || '')
-      .replace('{{mode}}', mode === 'brand' ? '品牌模式' : '产品模式')
-      .replace('{{brand_context}}', brandContext)
-      .replace('{{founder_authority}}', founderAuthority)
-      .replace('{{context}}', context)
-      .replace('{{personas_context}}', personasContext)
-      .replace('{{ingredients}}', ingredientsContext)
-      .replace('{{pillar1}}', pillar1.name)
-      .replace('{{pillar2}}', pillar2.name)
-      .replace('{{pillar3}}', pillar3.name)
-      .replace('{{source1}}', pillar1.source)
-      .replace('{{source2}}', pillar2.source)
-      .replace('{{source3}}', pillar3.source);
+    const storeFormatContext = STORE_FORMAT_CONTEXT[store_format] || STORE_FORMAT_CONTEXT.community;
+
+    let systemPrompt: string;
+    let userPrompt: string;
+
+    if (matrix_mode === '3h') {
+      // 3H九宫格模式（Hero/Hub/Help × 产品/场景/品牌）
+      systemPrompt = prompts.matrix_system
+        .replace(/\{\{store_format_context\}\}/g, storeFormatContext)
+        .replace(/\{\{brand_name\}\}/g, kb.brand.name);
+
+      userPrompt = (prompts.matrix_user || '')
+        .replace('{{mode}}', mode === 'brand' ? '品牌模式' : '产品模式')
+        .replace('{{brand_context}}', brandContext)
+        .replace('{{founder_authority}}', founderAuthority)
+        .replace('{{context}}', context)
+        .replace('{{personas_context}}', personasContext)
+        .replace('{{ingredients}}', ingredientsContext)
+        .replace('{{pillar1}}', pillar1.name)
+        .replace('{{pillar2}}', pillar2.name)
+        .replace('{{pillar3}}', pillar3.name)
+        .replace('{{source1}}', pillar1.source)
+        .replace('{{source2}}', pillar2.source)
+        .replace('{{source3}}', pillar3.source)
+        .replace(/\{\{store_format\}\}/g, store_format)
+        .replace(/\{\{store_format_context\}\}/g, storeFormatContext);
+    } else {
+      // 经典三列模式（增长/知识/权威）
+      systemPrompt = prompts.matrix_system;
+      userPrompt = (prompts.matrix_user || '')
+        .replace('{{mode}}', mode === 'brand' ? '品牌模式' : '产品模式')
+        .replace('{{brand_context}}', brandContext)
+        .replace('{{founder_authority}}', founderAuthority)
+        .replace('{{context}}', context)
+        .replace('{{personas_context}}', personasContext)
+        .replace('{{ingredients}}', ingredientsContext)
+        .replace('{{pillar1}}', pillar1.name)
+        .replace('{{pillar2}}', pillar2.name)
+        .replace('{{pillar3}}', pillar3.name)
+        .replace('{{source1}}', pillar1.source)
+        .replace('{{source2}}', pillar2.source)
+        .replace('{{source3}}', pillar3.source)
+        .replace(/\{\{store_format\}\}/g, store_format)
+        .replace(/\{\{store_format_context\}\}/g, storeFormatContext);
+    }
 
     // ==========================================
     // 5. 调用 AI

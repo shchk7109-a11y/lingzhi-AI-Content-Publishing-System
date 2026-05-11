@@ -163,6 +163,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { matrix, platform = 'video' } = body;
+    const store_format = body.store_format || 'community';
     const topicsPerIdea = Math.min(Math.max(body.topicsPerIdea || 2, 1), 3); // 1-3，默认2
 
     if (!matrix || !Array.isArray(matrix) || matrix.length === 0) {
@@ -226,7 +227,7 @@ export async function POST(request: Request) {
         .replace('{{platform}}', platform)
         .replace('{{matrix_json}}', JSON.stringify(matrix, null, 2));
 
-    // ======= 小红书专用分支 =======
+    // ======= 小红书专用分支（三业态3H九宫格） =======
     if (platform === 'xiaohongshu') {
       const xhsSystemTemplate = prompts.topics_system_xhs;
       const xhsUserTemplate = prompts.topics_user_xhs;
@@ -241,18 +242,35 @@ export async function POST(request: Request) {
         // 构建 personas 上下文
         const personasAndAngles = buildPersonasAndAnglesContext(kb);
 
-        // 构建支柱列表和矩阵摘要
+        // 构建支柱列表和矩阵摘要（兼容3H和经典格式）
         const pillarsList = matrix.map((row: any, i: number) =>
           `${i+1}. ${row.pillar}`
         ).join('\n');
 
-        const matrixSummary = matrix.map((row: any) =>
-          `「${row.pillar}」→ 增长策略：${row.growth?.title || ''} | 知识策略：${row.knowledge?.title || ''} | 权威策略：${row.authority?.title || ''}`
-        ).join('\n');
+        // 检测矩阵是否为3H格式
+        const is3HMatrix = matrix[0]?.hero_product !== undefined;
+        let matrixSummary: string;
+        if (is3HMatrix) {
+          matrixSummary = matrix.map((row: any) =>
+            `「${row.pillar}」→ Hero-产品：${row.hero_product?.title || ''} | Hero-场景：${row.hero_scene?.title || ''} | Hub-产品：${row.hub_product?.title || ''} | Help-产品：${row.help_product?.title || ''}`
+          ).join('\n');
+        } else {
+          matrixSummary = matrix.map((row: any) =>
+            `「${row.pillar}」→ 增长策略：${row.growth?.title || ''} | 知识策略：${row.knowledge?.title || ''} | 权威策略：${row.authority?.title || ''}`
+          ).join('\n');
+        }
+
+        // 三业态上下文
+        const storeFormatContextMap: Record<string, string> = {
+          community: '当前业态：灵芝水铺·社区店 | 心智锚点：家门口的灵芝水站 | 核心人群：社区居民、宝妈、银发族 | 调性：邻里温度×日常陪伴×复购驱动 | 场景：晨起一杯、接娃顺路、邻居推荐、四季调理',
+          scenic: '当前业态：灵云小院·景区店 | 心智锚点：可以喝的非遗文化馆 | 核心人群：游客、文旅爱好者、打卡达人 | 调性：文化体验×视觉冲击×传播裂变 | 场景：古风庭院、非遗体验、旅行打卡、伴手礼',
+          business: '当前业态：葫芦里卖什么·商务区店 | 心智锚点：打工人的草本能量站 | 核心人群：白领、互联网从业者、加班族 | 调性：效率养生×职场共鸣×即时转化 | 场景：早八续命、下午茶替代、加班回血、工位养生',
+        };
+        const storeFormatContext = storeFormatContextMap[store_format] || storeFormatContextMap.community;
 
         // 填充 system prompt（动态数量替换）
-        const xhsPerCategory = topicsPerIdea * 2; // 每类数量 = 每个创意N个 × 2个创意
-        const xhsTotalPerPillar = xhsPerCategory * 4; // 4类 × 每类数量
+        const xhsPerCategory = topicsPerIdea * 2;
+        const xhsTotalPerPillar = xhsPerCategory * 4;
         systemPrompt = xhsSystemTemplate
           .replace(/每类 3 个/g, `每类 ${xhsPerCategory} 个`)
           .replace(/共 12 个\/支柱/g, `共 ${xhsTotalPerPillar} 个/支柱`)
@@ -261,12 +279,16 @@ export async function POST(request: Request) {
           .replace(/\{\{product_matrix\}\}/g, productMatrix)
           .replace(/\{\{taste_advantage\}\}/g, tasteAdvantageContext)
           .replace(/\{\{brand_name\}\}/g, kb.brand.name)
-          .replace(/\{\{personas_and_angles\}\}/g, personasAndAngles);
+          .replace(/\{\{personas_and_angles\}\}/g, personasAndAngles)
+          .replace(/\{\{store_format\}\}/g, store_format)
+          .replace(/\{\{store_format_context\}\}/g, storeFormatContext);
 
         // 填充 user prompt
         userPrompt = xhsUserTemplate
           .replace(/\{\{pillars_list\}\}/g, pillarsList)
-          .replace(/\{\{matrix_summary\}\}/g, matrixSummary);
+          .replace(/\{\{matrix_summary\}\}/g, matrixSummary)
+          .replace(/\{\{store_format\}\}/g, store_format)
+          .replace(/\{\{store_format_context\}\}/g, storeFormatContext);
       }
     }
     // ======= 其他平台保持原有逻辑 =======

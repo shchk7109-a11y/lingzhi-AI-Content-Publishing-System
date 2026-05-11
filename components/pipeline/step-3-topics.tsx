@@ -4,7 +4,7 @@ import * as React from "react"
 import { Loader2, RefreshCw, Smartphone, MessageCircle, Video, FileDown, Sparkles, ArrowLeft, ArrowRight } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
-import { MatrixRow } from "./step-2-matrix"
+import { MatrixRow, StoreFormat } from "./step-2-matrix"
 import { fetchWithAIConfig } from "@/lib/ai-client-frontend"
 import { toast } from "sonner"
 
@@ -13,11 +13,21 @@ export interface TopicGroup {
   growth: string[]
   knowledge: string[]
   authority: string[]
-  // 小红书专用分类
+  // 小红书专用分类（旧版4类）
   experience?: string[]
   scenario?: string[]
   faq?: string[]
   contrast?: string[]
+  // 小红书3H九宫格（新版9格）
+  hero_product?: string[]
+  hero_scene?: string[]
+  hero_brand?: string[]
+  hub_product?: string[]
+  hub_scene?: string[]
+  hub_brand?: string[]
+  help_product?: string[]
+  help_scene?: string[]
+  help_brand?: string[]
 }
 
 export interface TopicWithContext {
@@ -25,10 +35,13 @@ export interface TopicWithContext {
   pillar_name: string
   content_type: string
   strategy_explanation: string
+  store_format?: string
+  grid_position?: string
 }
 
 interface Step3TopicsProps {
   matrix: MatrixRow[]
+  storeFormat?: StoreFormat
   onConfirm: (selectedTopics: TopicWithContext[], platform: Platform) => void
   onBack: () => void
 }
@@ -47,7 +60,20 @@ const STRATEGY_CONFIG = [
   { key: "authority" as const, icon: "👑", label: "权威", color: "#B85C00", bg: "#FFF8E7" },
 ]
 
-// 小红书专用四类选题配置
+// 小红书3H九宫格选题配置
+const XHS_3H_STRATEGY_CONFIG = [
+  { key: "hero_product" as const, icon: "🔥", label: "Hero-产品", color: "#DC2626", bg: "#FEF2F2" },
+  { key: "hero_scene" as const, icon: "🔥", label: "Hero-场景", color: "#DC2626", bg: "#FEF2F2" },
+  { key: "hero_brand" as const, icon: "🔥", label: "Hero-品牌", color: "#DC2626", bg: "#FEF2F2" },
+  { key: "hub_product" as const, icon: "🔗", label: "Hub-产品", color: "#D97706", bg: "#FFFBEB" },
+  { key: "hub_scene" as const, icon: "🔗", label: "Hub-场景", color: "#D97706", bg: "#FFFBEB" },
+  { key: "hub_brand" as const, icon: "🔗", label: "Hub-品牌", color: "#D97706", bg: "#FFFBEB" },
+  { key: "help_product" as const, icon: "💡", label: "Help-产品", color: "#059669", bg: "#ECFDF5" },
+  { key: "help_scene" as const, icon: "💡", label: "Help-场景", color: "#059669", bg: "#ECFDF5" },
+  { key: "help_brand" as const, icon: "💡", label: "Help-品牌", color: "#059669", bg: "#ECFDF5" },
+]
+
+// 旧版小红书4类选题配置（兼容）
 const XHS_STRATEGY_CONFIG = [
   { key: "experience" as const, icon: "💫", label: "客户体验", color: "#C2185B", bg: "#FCE4EC" },
   { key: "scenario" as const, icon: "🌿", label: "场景推荐", color: "#2D5A27", bg: "#EBF5E9" },
@@ -57,7 +83,14 @@ const XHS_STRATEGY_CONFIG = [
 
 const PILLAR_COLORS = ["#2D5A27", "#E8820A", "#3B4FA8"]
 
-export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
+// 业态标签
+const STORE_FORMAT_LABELS: Record<string, string> = {
+  community: "灵芝水铺·社区店",
+  scenic: "灵云小院·景区店",
+  business: "葫芦里卖什么·商务区店",
+}
+
+export function Step3Topics({ matrix, storeFormat, onConfirm, onBack }: Step3TopicsProps) {
   const [topicsMap, setTopicsMap] = React.useState<Record<Platform, TopicGroup[]>>({
     xiaohongshu: [],
     wechat: [],
@@ -72,7 +105,7 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
   })
   const [error, setError] = React.useState<string | null>(null)
   const [topicsPerIdea, setTopicsPerIdea] = React.useState<number>(2)
-  const [topicContextMap, setTopicContextMap] = React.useState<Map<string, {pillar_name: string, content_type: string, strategy_explanation: string}>>(new Map())
+  const [topicContextMap, setTopicContextMap] = React.useState<Map<string, {pillar_name: string, content_type: string, strategy_explanation: string, store_format?: string, grid_position?: string}>>(new Map())
 
   const handleGenerate = async (platform: Platform) => {
     setLoadingMap((prev) => ({ ...prev, [platform]: true }))
@@ -81,7 +114,7 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
       const response = await fetchWithAIConfig("/api/generate/topics", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ matrix, platform, topicsPerIdea }),
+        body: JSON.stringify({ matrix, platform, topicsPerIdea, store_format: storeFormat }),
       })
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}))
@@ -91,39 +124,53 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
       if (data.topics) {
         const topicGroups: TopicGroup[] = Object.keys(data.topics).map((pillarName) => {
           const t = data.topics[pillarName]
-          // 小红书专用格式：experience/scenario/faq/contrast
-          // 通用格式：growth/knowledge/authority
+          // 检测返回格式：3H九宫格 / 旧版4类 / 通用3列
+          const is3H = t.hero_product !== undefined || t.hub_product !== undefined
           const isXhsFormat = t.experience !== undefined || t.scenario !== undefined
           return {
             pillar: pillarName,
-            growth: isXhsFormat ? [] : (t.growth || []),
-            knowledge: isXhsFormat ? [] : (t.knowledge || []),
-            authority: isXhsFormat ? [] : (t.authority || []),
-            experience: t.experience || [],
-            scenario: t.scenario || [],
-            faq: t.faq || [],
-            contrast: t.contrast || [],
+            growth: (!is3H && !isXhsFormat) ? (t.growth || []) : [],
+            knowledge: (!is3H && !isXhsFormat) ? (t.knowledge || []) : [],
+            authority: (!is3H && !isXhsFormat) ? (t.authority || []) : [],
+            experience: isXhsFormat ? (t.experience || []) : [],
+            scenario: isXhsFormat ? (t.scenario || []) : [],
+            faq: isXhsFormat ? (t.faq || []) : [],
+            contrast: isXhsFormat ? (t.contrast || []) : [],
+            hero_product: is3H ? (t.hero_product || []) : [],
+            hero_scene: is3H ? (t.hero_scene || []) : [],
+            hero_brand: is3H ? (t.hero_brand || []) : [],
+            hub_product: is3H ? (t.hub_product || []) : [],
+            hub_scene: is3H ? (t.hub_scene || []) : [],
+            hub_brand: is3H ? (t.hub_brand || []) : [],
+            help_product: is3H ? (t.help_product || []) : [],
+            help_scene: is3H ? (t.help_scene || []) : [],
+            help_brand: is3H ? (t.help_brand || []) : [],
           }
         })
         setTopicsMap((prev) => ({ ...prev, [platform]: topicGroups }))
         // 构建 topic 上下文映射
-        const newContextMap = new Map(topicContextMap);
-        const strategyKeys = platform === 'xiaohongshu'
-          ? ['experience', 'scenario', 'faq', 'contrast']
-          : ['growth', 'knowledge', 'authority'];
+        const newContextMap = new Map(topicContextMap)
+        const is3H = topicGroups.some(g => (g.hero_product?.length ?? 0) > 0)
+        const strategyKeys = is3H
+          ? ['hero_product', 'hero_scene', 'hero_brand', 'hub_product', 'hub_scene', 'hub_brand', 'help_product', 'help_scene', 'help_brand']
+          : (platform === 'xiaohongshu'
+            ? ['experience', 'scenario', 'faq', 'contrast']
+            : ['growth', 'knowledge', 'authority'])
         topicGroups.forEach(group => {
           strategyKeys.forEach(key => {
-            const topicsList = (group as any)[key] || [];
+            const topicsList = (group as any)[key] || []
             topicsList.forEach((t: string) => {
               newContextMap.set(t, {
                 pillar_name: group.pillar,
                 content_type: key,
                 strategy_explanation: '',
-              });
-            });
-          });
-        });
-        setTopicContextMap(newContextMap);
+                store_format: storeFormat,
+                grid_position: key,
+              })
+            })
+          })
+        })
+        setTopicContextMap(newContextMap)
         toast.success(`${PLATFORMS.find((p) => p.key === platform)?.label}选题生成成功！`)
       } else {
         throw new Error("AI 返回格式异常，请重试")
@@ -144,9 +191,22 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
     let csvContent = "\uFEFF"
     csvContent += "支柱,策略类型,选题标题\n"
     topics.forEach((group) => {
-      group.growth.forEach((t) => (csvContent += `"${group.pillar}","增长","${t}"\n`))
-      group.knowledge.forEach((t) => (csvContent += `"${group.pillar}","知识","${t}"\n`))
-      group.authority.forEach((t) => (csvContent += `"${group.pillar}","权威","${t}"\n`))
+      // 3H九宫格格式
+      const is3H = (group.hero_product?.length ?? 0) > 0
+      if (is3H) {
+        XHS_3H_STRATEGY_CONFIG.forEach(s => {
+          const list = (group as any)[s.key] || []
+          list.forEach((t: string) => csvContent += `"${group.pillar}","${s.label}","${t}"\n`)
+        })
+      } else {
+        group.growth.forEach((t) => (csvContent += `"${group.pillar}","增长","${t}"\n`))
+        group.knowledge.forEach((t) => (csvContent += `"${group.pillar}","知识","${t}"\n`))
+        group.authority.forEach((t) => (csvContent += `"${group.pillar}","权威","${t}"\n`))
+        if (group.experience?.length) group.experience.forEach((t) => (csvContent += `"${group.pillar}","客户体验","${t}"\n`))
+        if (group.scenario?.length) group.scenario.forEach((t) => (csvContent += `"${group.pillar}","场景推荐","${t}"\n`))
+        if (group.faq?.length) group.faq.forEach((t) => (csvContent += `"${group.pillar}","疑问解答","${t}"\n`))
+        if (group.contrast?.length) group.contrast.forEach((t) => (csvContent += `"${group.pillar}","认知反差","${t}"\n`))
+      }
     })
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
     const link = document.createElement("a")
@@ -171,6 +231,14 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
   }
 
   const getGroupAllTopics = (g: TopicGroup): string[] => {
+    const is3H = (g.hero_product?.length ?? 0) > 0
+    if (is3H) {
+      return [
+        ...(g.hero_product || []), ...(g.hero_scene || []), ...(g.hero_brand || []),
+        ...(g.hub_product || []), ...(g.hub_scene || []), ...(g.hub_brand || []),
+        ...(g.help_product || []), ...(g.help_scene || []), ...(g.help_brand || []),
+      ]
+    }
     const isXhs = (g.experience?.length ?? 0) > 0 || (g.scenario?.length ?? 0) > 0
     if (isXhs) {
       return [...(g.experience || []), ...(g.scenario || []), ...(g.faq || []), ...(g.contrast || [])]
@@ -192,15 +260,17 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
   const handleConfirm = () => {
     if (selectedTopics.size > 0) {
       const topicsWithContext: TopicWithContext[] = Array.from(selectedTopics).map(topic => {
-        const ctx = topicContextMap.get(topic);
+        const ctx = topicContextMap.get(topic)
         return {
           topic,
           pillar_name: ctx?.pillar_name || '',
           content_type: ctx?.content_type || '',
           strategy_explanation: ctx?.strategy_explanation || '',
-        };
-      });
-      onConfirm(topicsWithContext, currentPlatform);
+          store_format: ctx?.store_format || storeFormat,
+          grid_position: ctx?.grid_position || '',
+        }
+      })
+      onConfirm(topicsWithContext, currentPlatform)
     }
   }
 
@@ -238,7 +308,10 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
                 步骤三：全媒体选题矩阵
               </h2>
               <p className="text-sm" style={{ color: "#8B6B4A" }}>
-                根据不同平台算法逻辑，生成定制化选题，勾选心仪标题以生成脚本
+                {storeFormat
+                  ? `当前业态：${STORE_FORMAT_LABELS[storeFormat] || storeFormat} · 根据不同平台算法逻辑生成定制化选题`
+                  : '根据不同平台算法逻辑，生成定制化选题，勾选心仪标题以生成脚本'
+                }
               </p>
             </div>
           </div>
@@ -265,7 +338,7 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
                   <div
                     className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                     style={{
-                      background: isActive ? "linear-gradient(135deg, #2D5A27, #4A8A42)" : "rgba(45,90,39,0.08)",
+                      background: isActive ? "linear-gradient(135deg, #2D5A27, #4A8A42)" : "rgba(45,90,39,0.1)",
                     }}
                   >
                     <Icon className="w-4 h-4" style={{ color: isActive ? "white" : "rgba(45,90,39,0.5)" }} />
@@ -327,12 +400,6 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
                   <option value={2}>2个选题</option>
                   <option value={3}>3个选题</option>
                 </select>
-                <span className="text-xs" style={{ color: "rgba(45,90,39,0.5)" }}>
-                  共约{currentPlatform === 'xiaohongshu'
-                    ? matrix.length * 4 * 2 * topicsPerIdea
-                    : matrix.length * 3 * 2 * topicsPerIdea
-                  }个
-                </span>
               </div>
               {currentTopics.length > 0 && (
                 <button
@@ -398,104 +465,168 @@ export function Step3Topics({ matrix, onConfirm, onBack }: Step3TopicsProps) {
                 style: { color: "rgba(45,90,39,0.2)" },
               })}
               <p className="text-sm" style={{ color: "rgba(45,90,39,0.5)" }}>
-                点击右上角"生成选题"获取{PLATFORMS.find((p) => p.key === currentPlatform)?.label}定制化选题（45个）
+                点击右上角"生成选题"获取{PLATFORMS.find((p) => p.key === currentPlatform)?.label}定制化选题
               </p>
             </div>
           ) : (
             <div className="space-y-5">
-              {currentTopics.map((group, groupIndex) => (
-                <div
-                  key={groupIndex}
-                  className="rounded-xl overflow-hidden"
-                  style={{ border: `1.5px solid ${PILLAR_COLORS[groupIndex] || "#2D5A27"}25` }}
-                >
-                  {/* 支柱标题 */}
+              {currentTopics.map((group, groupIndex) => {
+                const is3H = (group.hero_product?.length ?? 0) > 0
+                return (
                   <div
-                    className="px-4 py-3 flex items-center gap-2"
-                    style={{
-                      background: `${PILLAR_COLORS[groupIndex] || "#2D5A27"}10`,
-                      borderBottom: `1px solid ${PILLAR_COLORS[groupIndex] || "#2D5A27"}20`,
-                    }}
+                    key={groupIndex}
+                    className="rounded-xl overflow-hidden"
+                    style={{ border: `1.5px solid ${PILLAR_COLORS[groupIndex] || "#2D5A27"}25` }}
                   >
-                    <span
-                      className="font-bold text-sm"
-                      style={{ color: PILLAR_COLORS[groupIndex] || "#2D5A27" }}
-                    >
-                      {group.pillar}
-                    </span>
-                    <button
-                      onClick={() => toggleGroup(getGroupAllTopics(group))}
-                      className="ml-auto text-xs px-2.5 py-1 rounded-lg"
+                    {/* 支柱标题 */}
+                    <div
+                      className="px-4 py-3 flex items-center gap-2"
                       style={{
-                        background: "rgba(45,90,39,0.08)",
-                        color: PILLAR_COLORS[groupIndex] || "#2D5A27",
+                        background: `${PILLAR_COLORS[groupIndex] || "#2D5A27"}10`,
+                        borderBottom: `1px solid ${PILLAR_COLORS[groupIndex] || "#2D5A27"}20`,
                       }}
                     >
-                      全选本组
-                    </button>
-                  </div>
+                      <span
+                        className="font-bold text-sm"
+                        style={{ color: PILLAR_COLORS[groupIndex] || "#2D5A27" }}
+                      >
+                        {group.pillar}
+                      </span>
+                      <button
+                        onClick={() => toggleGroup(getGroupAllTopics(group))}
+                        className="ml-auto text-xs px-2.5 py-1 rounded-lg"
+                        style={{
+                          background: "rgba(45,90,39,0.08)",
+                          color: PILLAR_COLORS[groupIndex] || "#2D5A27",
+                        }}
+                      >
+                        全选本组
+                      </button>
+                    </div>
 
-                  {/* 选题列表：小红书用四列，其他平台用三列 */}
-                  {(() => {
-                    const isXhs = (group.experience?.length ?? 0) > 0 || (group.scenario?.length ?? 0) > 0
-                    const config = isXhs ? XHS_STRATEGY_CONFIG : STRATEGY_CONFIG
-                    const colClass = isXhs ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-gray-100" : "grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100"
-                    return (
-                      <div className={colClass}>
-                        {config.map((strategy) => {
-                          const topics: string[] = (group as any)[strategy.key] || []
-                          return (
-                            <div key={strategy.key} className="p-4 space-y-2">
-                              <div className="flex items-center justify-between mb-2">
-                                <div
-                                  className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
-                                  style={{ background: strategy.bg, color: strategy.color }}
-                                >
-                                  <span>{strategy.icon}</span>
-                                  {strategy.label}
-                                </div>
-                                <button
-                                  onClick={() => toggleGroup(topics)}
-                                  className="text-xs"
-                                  style={{ color: "rgba(45,90,39,0.5)" }}
-                                >
-                                  {topics.length > 0 && topics.every((t) => selectedTopics.has(t)) ? "取消" : "全选"}
-                                </button>
-                              </div>
-                              {topics.map((topic, topicIndex) => (
-                                <div
-                                  key={topicIndex}
-                                  className="flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-all"
-                                  style={{
-                                    background: selectedTopics.has(topic) ? strategy.bg : "transparent",
-                                    border: selectedTopics.has(topic)
-                                      ? `1px solid ${strategy.color}30`
-                                      : "1px solid transparent",
-                                  }}
-                                  onClick={() => toggleTopic(topic)}
-                                >
-                                  <Checkbox
-                                    checked={selectedTopics.has(topic)}
-                                    onCheckedChange={() => toggleTopic(topic)}
-                                    className="mt-0.5 flex-shrink-0"
-                                    style={{ accentColor: strategy.color }}
-                                  />
-                                  <Label
-                                    className="cursor-pointer text-sm leading-relaxed"
-                                    style={{ color: selectedTopics.has(topic) ? strategy.color : "#3D2B1F" }}
-                                  >
-                                    {topic}
-                                  </Label>
-                                </div>
-                              ))}
+                    {/* 选题列表 */}
+                    {(() => {
+                      if (is3H) {
+                        // 3H九宫格布局：3行3列
+                        return (
+                          <div className="p-4">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              {XHS_3H_STRATEGY_CONFIG.map((strategy) => {
+                                const topics: string[] = (group as any)[strategy.key] || []
+                                if (topics.length === 0) return null
+                                return (
+                                  <div key={strategy.key} className="p-3 rounded-lg space-y-2" style={{ background: strategy.bg }}>
+                                    <div className="flex items-center justify-between mb-1">
+                                      <div
+                                        className="flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full"
+                                        style={{ background: `${strategy.color}15`, color: strategy.color }}
+                                      >
+                                        <span>{strategy.icon}</span>
+                                        {strategy.label}
+                                      </div>
+                                      <button
+                                        onClick={() => toggleGroup(topics)}
+                                        className="text-xs"
+                                        style={{ color: "rgba(45,90,39,0.5)" }}
+                                      >
+                                        {topics.every((t) => selectedTopics.has(t)) ? "取消" : "全选"}
+                                      </button>
+                                    </div>
+                                    {topics.map((topic, topicIndex) => (
+                                      <div
+                                        key={topicIndex}
+                                        className="flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-all"
+                                        style={{
+                                          background: selectedTopics.has(topic) ? "white" : "transparent",
+                                          border: selectedTopics.has(topic)
+                                            ? `1px solid ${strategy.color}30`
+                                            : "1px solid transparent",
+                                        }}
+                                        onClick={() => toggleTopic(topic)}
+                                      >
+                                        <Checkbox
+                                          checked={selectedTopics.has(topic)}
+                                          onCheckedChange={() => toggleTopic(topic)}
+                                          className="mt-0.5 flex-shrink-0"
+                                        />
+                                        <Label
+                                          className="cursor-pointer text-sm leading-relaxed"
+                                          style={{ color: selectedTopics.has(topic) ? strategy.color : "#3D2B1F" }}
+                                        >
+                                          {topic}
+                                        </Label>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )
+                              })}
                             </div>
-                          )
-                        })}
-                      </div>
-                    )
-                  })()}
-                </div>
-              ))}
+                          </div>
+                        )
+                      }
+
+                      // 旧版布局（4类或3列）
+                      const isXhs = (group.experience?.length ?? 0) > 0 || (group.scenario?.length ?? 0) > 0
+                      const config = isXhs ? XHS_STRATEGY_CONFIG : STRATEGY_CONFIG
+                      const colClass = isXhs
+                        ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-gray-100"
+                        : "grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100"
+                      return (
+                        <div className={colClass}>
+                          {config.map((strategy) => {
+                            const topics: string[] = (group as any)[strategy.key] || []
+                            return (
+                              <div key={strategy.key} className="p-4 space-y-2">
+                                <div className="flex items-center justify-between mb-2">
+                                  <div
+                                    className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
+                                    style={{ background: strategy.bg, color: strategy.color }}
+                                  >
+                                    <span>{strategy.icon}</span>
+                                    {strategy.label}
+                                  </div>
+                                  <button
+                                    onClick={() => toggleGroup(topics)}
+                                    className="text-xs"
+                                    style={{ color: "rgba(45,90,39,0.5)" }}
+                                  >
+                                    {topics.length > 0 && topics.every((t) => selectedTopics.has(t)) ? "取消" : "全选"}
+                                  </button>
+                                </div>
+                                {topics.map((topic, topicIndex) => (
+                                  <div
+                                    key={topicIndex}
+                                    className="flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-all"
+                                    style={{
+                                      background: selectedTopics.has(topic) ? strategy.bg : "transparent",
+                                      border: selectedTopics.has(topic)
+                                        ? `1px solid ${strategy.color}30`
+                                        : "1px solid transparent",
+                                    }}
+                                    onClick={() => toggleTopic(topic)}
+                                  >
+                                    <Checkbox
+                                      checked={selectedTopics.has(topic)}
+                                      onCheckedChange={() => toggleTopic(topic)}
+                                      className="mt-0.5 flex-shrink-0"
+                                    />
+                                    <Label
+                                      className="cursor-pointer text-sm leading-relaxed"
+                                      style={{ color: selectedTopics.has(topic) ? strategy.color : "#3D2B1F" }}
+                                    >
+                                      {topic}
+                                    </Label>
+                                  </div>
+                                ))}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>

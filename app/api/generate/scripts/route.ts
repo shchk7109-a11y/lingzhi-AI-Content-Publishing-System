@@ -239,6 +239,16 @@ export async function POST(request: Request) {
     const pillar_name = body.pillar_name || '';
     const content_type = body.content_type || '';
     const strategy_explanation = body.strategy_explanation || '';
+    const store_format = body.store_format || '';
+    const grid_position = body.grid_position || '';
+
+    // 三业态上下文注入
+    const storeFormatContextMap: Record<string, string> = {
+      community: '当前业态：灵芝水铺·社区店\n心智锚点：家门口的灵芝水站\n内容调性：邻里温度×日常陪伴×复购驱动\n场景关键词：晨起一杯、接娃顺路、邻居推荐、四季调理\n内容约束：强调“每天一杯”的日常感，突出便利性和性价比，使用社区生活场景',
+      scenic: '当前业态：灵云小院·景区店\n心智锚点：可以喝的非遗文化馆\n内容调性：文化体验×视觉冲击×传播裂变\n场景关键词：古风庭院、非遗体验、旅行打卡、伴手礼\n内容约束：强调“体验感”和“出片率”，突出文化深度和视觉美学，使用文旅打卡场景',
+      business: '当前业态：葫芦里卖什么·商务区店\n心智锚点：打工人的草本能量站\n内容调性：效率养生×职场共鸣×即时转化\n场景关键词：早八续命、下午茶替代、加班回血、工位养生\n内容约束：强调“效率”和“即时感”，用职场语言包装养生概念，使用工作场景',
+    };
+    const storeFormatContext = store_format ? (storeFormatContextMap[store_format] || '') : '';
 
     if (!topic || typeof topic !== 'string') {
       return NextResponse.json(
@@ -324,6 +334,18 @@ export async function POST(request: Request) {
       systemPromptTemplate = prompts.scripts_system_wechat;
     } else {
       systemPromptTemplate = prompts.scripts_system_video;
+    }
+
+    // 注入三业态上下文到模板中
+    if (storeFormatContext) {
+      systemPromptTemplate = systemPromptTemplate
+        .replace(/\{\{store_format_context\}\}/g, storeFormatContext)
+        .replace(/\{\{store_format\}\}/g, store_format)
+        .replace(/\{\{grid_position\}\}/g, grid_position);
+      // 如果模板中没有占位符，追加到末尾
+      if (!systemPromptTemplate.includes(storeFormatContext)) {
+        systemPromptTemplate += `\n\n**【三业态内容策略】**\n${storeFormatContext}\n九宫格位置：${grid_position}\n请根据以上业态特点和九宫格位置调整内容调性和场景选择。`;
+      }
     }
 
     const openai = createAIClient(request);
