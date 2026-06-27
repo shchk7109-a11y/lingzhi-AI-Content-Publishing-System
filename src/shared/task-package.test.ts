@@ -27,6 +27,21 @@ describe('task package protocol', () => {
     })
   })
 
+  it('rejects malformed manifest input without throwing', () => {
+    expect(parseManifest(null)).toEqual({
+      ok: false,
+      errors: [
+        'protocol_version must be 1.0',
+        'source_app must be lingzhi-tuwen-pro',
+        'default_platform must be xiaohongshu',
+        'batch_id is required',
+        'created_at is required',
+        'media_root is required',
+        'row_count must be a non-negative integer'
+      ]
+    })
+  })
+
   it('rejects non-xiaohongshu platform in v1', () => {
     const result = validateTaskRow({
       batch_id: 'batch_1',
@@ -45,7 +60,52 @@ describe('task package protocol', () => {
 
     expect(result.ok).toBe(false)
     if (result.ok) return
-    expect(result.errors).toContain('platform must be xiaohongshu for protocol v1')
+    expect(result.errors).toEqual(['platform must be xiaohongshu for protocol v1'])
+  })
+
+  it('accepts a valid task row with normalized values', () => {
+    const result = validateTaskRow({
+      batch_id: ' batch_1 ',
+      draft_id: ' draft_1 ',
+      platform: ' xiaohongshu ',
+      action_type: ' publish ',
+      blogger_id: ' blogger_a ',
+      account_alias: ' xhs_a_001 ',
+      title: ' 灵芝水铺日常 ',
+      content: ' 今天分享一杯灵芝饮。 ',
+      tags: '灵芝, 养生',
+      media_folder: ' media/draft_1 ',
+      media_type: ' image ',
+      priority: '7',
+      require_manual_confirm: 'false',
+      risk_level: ' low ',
+      remark: ' 待人工确认 '
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        batch_id: 'batch_1',
+        draft_id: 'draft_1',
+        platform: 'xiaohongshu',
+        action_type: 'publish',
+        blogger_id: 'blogger_a',
+        account_alias: 'xhs_a_001',
+        title: '灵芝水铺日常',
+        content: '今天分享一杯灵芝饮。',
+        tags: ['灵芝', '养生'],
+        media_folder: 'media/draft_1',
+        media_type: 'image',
+        target_note_url: '',
+        comment_text: '',
+        publish_window_start: '',
+        publish_window_end: '',
+        priority: 7,
+        require_manual_confirm: true,
+        risk_level: 'low',
+        remark: '待人工确认'
+      }
+    })
   })
 
   it('requires target URL and comment text for comment tasks', () => {

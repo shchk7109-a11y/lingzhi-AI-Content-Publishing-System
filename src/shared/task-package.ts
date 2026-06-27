@@ -78,8 +78,14 @@ function splitTags(value: unknown): string[] {
     .filter(Boolean)
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
 export function parseManifest(input: unknown): ParseResult<TaskPackageManifest> {
-  const value = input as Partial<TaskPackageManifest>
+  const value = isRecord(input) ? input : {}
+  const rowCount = value.row_count
+  let normalizedRowCount = 0
   const errors: string[] = []
 
   if (value.protocol_version !== TASK_PACKAGE_PROTOCOL_VERSION) errors.push('protocol_version must be 1.0')
@@ -88,8 +94,10 @@ export function parseManifest(input: unknown): ParseResult<TaskPackageManifest> 
   if (!stringValue(value.batch_id)) errors.push('batch_id is required')
   if (!stringValue(value.created_at)) errors.push('created_at is required')
   if (!stringValue(value.media_root)) errors.push('media_root is required')
-  if (!Number.isInteger(value.row_count) || value.row_count < 0) {
+  if (typeof rowCount !== 'number' || !Number.isInteger(rowCount) || rowCount < 0) {
     errors.push('row_count must be a non-negative integer')
+  } else {
+    normalizedRowCount = rowCount
   }
 
   if (errors.length > 0) return { ok: false, errors }
@@ -103,7 +111,7 @@ export function parseManifest(input: unknown): ParseResult<TaskPackageManifest> 
       created_at: stringValue(value.created_at),
       default_platform: 'xiaohongshu',
       media_root: stringValue(value.media_root),
-      row_count: value.row_count as number
+      row_count: normalizedRowCount
     }
   }
 }
