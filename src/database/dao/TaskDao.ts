@@ -44,6 +44,28 @@ export class TaskDao {
     `).get(id) as Record<string, unknown> | undefined
   }
 
+  getByImportKey(input: {
+    batch_id: string
+    draft_id: string
+    action_type: string
+    account_id: number
+  }): Record<string, unknown> | undefined {
+    return this.db.prepare(`
+      SELECT *
+      FROM tasks
+      WHERE batch_id = ?
+        AND draft_id = ?
+        AND action_type = ?
+        AND account_id = ?
+      LIMIT 1
+    `).get(
+      input.batch_id,
+      input.draft_id,
+      input.action_type,
+      input.account_id
+    ) as Record<string, unknown> | undefined
+  }
+
   getAll(filters?: { status?: string; platform?: string; account_id?: number }): Record<string, unknown>[] {
     let sql = `
       SELECT t.*, cp.title as content_title, a.nickname as account_nickname

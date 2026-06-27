@@ -112,15 +112,19 @@ export function registerIpcHandlers(): void {
     if (!readResult.ok) {
       return {
         success: false,
+        partialSuccess: false,
         importedContent: 0,
         importedTasks: 0,
+        skippedRows: 0,
         errors: readResult.errors
       }
     }
 
     const importResult = taskPackageImporter.import(readResult.value)
+    const hasImportedRows = importResult.importedContent > 0 || importResult.importedTasks > 0
     return {
-      success: importResult.errors.length === 0,
+      success: hasImportedRows || importResult.errors.length === 0,
+      partialSuccess: hasImportedRows && importResult.errors.length > 0,
       ...importResult
     }
   })

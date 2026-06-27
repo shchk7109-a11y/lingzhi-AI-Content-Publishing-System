@@ -18,6 +18,8 @@ vi.mock('../../database/db', () => ({
 }))
 
 import { AccountDao } from '../../database/dao/AccountDao'
+import { ContentDao } from '../../database/dao/ContentDao'
+import { TaskDao } from '../../database/dao/TaskDao'
 import { TaskPackageImporter } from './TaskPackageImporter'
 
 function createPackage(rows: ReadTaskPackageResult['rows']): ReadTaskPackageResult {
@@ -128,7 +130,7 @@ describe('TaskPackageImporter', () => {
   it('imports mixed publish and interaction rows into content and tasks', () => {
     const result = new TaskPackageImporter().import(createPackage([publishRow(), commentRow(), favoriteRow()]))
 
-    expect(result).toEqual({ importedContent: 1, importedTasks: 3, errors: [] })
+    expect(result).toEqual({ importedContent: 1, importedTasks: 3, skippedRows: 0, errors: [] })
     expect(state.database?.prepare('SELECT COUNT(*) as count FROM content_pool').get()).toMatchObject({ count: 1 })
     expect(state.database?.prepare('SELECT COUNT(*) as count FROM tasks').get()).toMatchObject({ count: 3 })
 
@@ -180,6 +182,7 @@ describe('TaskPackageImporter', () => {
     expect(result).toEqual({
       importedContent: 1,
       importedTasks: 1,
+      skippedRows: 0,
       errors: ['draft_comment_1: account_alias missing_alias is not registered for xiaohongshu']
     })
     expect(state.database?.prepare('SELECT COUNT(*) as count FROM content_pool').get()).toMatchObject({ count: 1 })
@@ -190,10 +193,52 @@ describe('TaskPackageImporter', () => {
   it('does not create content rows for comment tasks', () => {
     const result = new TaskPackageImporter().import(createPackage([commentRow()]))
 
-    expect(result).toEqual({ importedContent: 0, importedTasks: 1, errors: [] })
+    expect(result).toEqual({ importedContent: 0, importedTasks: 1, skippedRows: 0, errors: [] })
     expect(state.database?.prepare('SELECT COUNT(*) as count FROM content_pool').get()).toMatchObject({ count: 0 })
 
     const task = state.database?.prepare('SELECT content_id, action_type FROM tasks WHERE draft_id = ?').get('draft_comment_1')
     expect(task).toMatchObject({ content_id: null, action_type: 'comment' })
+  })
+
+  it('skips duplicate task-package rows without duplicating content or tasks', () => {
+    const importer = new TaskPackageImporter()
+
+    expect(importer.import(createPackage([publishRow(), commentRow()]))).toEqual({
+      importedContent: 1,
+      importedTasks: 2,
+      skippedRows: 0,
+      errors: []
+    })
+
+    expect(importer.import(createPackage([publishRow(), commentRow()]))).toEqual({
+      importedContent: 0,
+      importedTasks: 0,
+      skippedRows: 2,
+      errors: []
+    })
+    expect(state.database?.prepare('SELECT COUNT(*) as count FROM content_pool').get()).toMatchObject({ count: 1 })
+    expect(state.database?.prepare('SELECT COUNT(*) as count FROM tasks').get()).toMatchObject({ count: 2 })
+  })
+
+  it('rolls back publish content when task insertion fails for that row', () => {
+    class FailingTaskDao extends TaskDao {
+      override insert(): number {
+        throw new Error('simulated task insert failure')
+      }
+    }
+
+    const result = new TaskPackageImporter({
+      contentDao: new ContentDao(),
+      taskDao: new FailingTaskDao()
+    }).import(createPackage([publishRow()]))
+
+    expect(result).toEqual({
+      importedContent: 0,
+      importedTasks: 0,
+      skippedRows: 0,
+      errors: ['draft_publish_1: simulated task insert failure']
+    })
+    expect(state.database?.prepare('SELECT COUNT(*) as count FROM content_pool').get()).toMatchObject({ count: 0 })
+    expect(state.database?.prepare('SELECT COUNT(*) as count FROM tasks').get()).toMatchObject({ count: 0 })
   })
 })

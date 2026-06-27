@@ -2,12 +2,14 @@ import { AccountDao } from '../../database/dao/AccountDao'
 import { ContentDao } from '../../database/dao/ContentDao'
 import { TaskDao } from '../../database/dao/TaskDao'
 import type { TaskInsertData } from '../../database/dao/task-action-types'
+import { getDatabase } from '../../database/db'
 import type { ValidTaskPackageRow } from '../../shared/task-package'
 import type { ReadTaskPackageResult } from './TaskPackageReader'
 
 export interface TaskPackageImportSummary {
   importedContent: number
   importedTasks: number
+  skippedRows: number
   errors: string[]
 }
 
@@ -32,6 +34,7 @@ export class TaskPackageImporter {
     const summary: TaskPackageImportSummary = {
       importedContent: 0,
       importedTasks: 0,
+      skippedRows: 0,
       errors: []
     }
 
@@ -42,19 +45,46 @@ export class TaskPackageImporter {
         continue
       }
 
-      if (row.action_type === 'publish') {
-        const contentId = this.importPublishContent(row, taskPackage)
-        this.taskDao.insert(this.buildTask(row, Number(account.id), contentId, taskPackage))
-        summary.importedContent += 1
-        summary.importedTasks += 1
+      const accountId = Number(account.id)
+      if (this.taskDao.getByImportKey({
+        batch_id: row.batch_id,
+        draft_id: row.draft_id,
+        action_type: row.action_type,
+        account_id: accountId
+      })) {
+        summary.skippedRows += 1
         continue
       }
 
-      this.taskDao.insert(this.buildTask(row, Number(account.id), null, taskPackage))
-      summary.importedTasks += 1
+      try {
+        const rowResult = getDatabase().transaction(() => this.importRow(row, accountId, taskPackage))()
+        summary.importedContent += rowResult.importedContent
+        summary.importedTasks += 1
+      } catch (error) {
+        summary.errors.push(`${row.draft_id}: ${this.errorMessage(error)}`)
+      }
     }
 
     return summary
+  }
+
+  private importRow(
+    row: ValidTaskPackageRow,
+    accountId: number,
+    taskPackage: ReadTaskPackageResult
+  ): { importedContent: number } {
+    if (row.action_type !== 'publish') {
+      this.taskDao.insert(this.buildTask(row, accountId, null, taskPackage))
+      return { importedContent: 0 }
+    }
+
+    const existingContent = this.contentDao.getByDraftId(row.draft_id)
+    const contentId = existingContent?.id
+      ? Number(existingContent.id)
+      : this.importPublishContent(row, taskPackage)
+
+    this.taskDao.insert(this.buildTask(row, accountId, contentId, taskPackage))
+    return { importedContent: existingContent?.id ? 0 : 1 }
   }
 
   private importPublishContent(row: ValidTaskPackageRow, taskPackage: ReadTaskPackageResult): number {
@@ -102,5 +132,9 @@ export class TaskPackageImporter {
       package_dir: taskPackage.packageDir,
       media_folder: row.media_folder || undefined
     }
+  }
+
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error)
   }
 }

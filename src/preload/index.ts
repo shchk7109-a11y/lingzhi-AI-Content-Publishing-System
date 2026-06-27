@@ -30,8 +30,10 @@ const api = {
     preview: (packageDir: string) => ipcRenderer.invoke('taskPackage:preview', packageDir),
     import: (packageDir: string) => ipcRenderer.invoke('taskPackage:import', packageDir) as Promise<{
       success: boolean
+      partialSuccess: boolean
       importedContent: number
       importedTasks: number
+      skippedRows: number
       errors: string[]
     }>
   },

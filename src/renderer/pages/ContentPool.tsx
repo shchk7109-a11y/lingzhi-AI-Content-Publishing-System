@@ -61,13 +61,23 @@ function ContentPool(): JSX.Element {
       if (!packageDir) return
 
       const result = await window.api.taskPackage.import(packageDir)
+      const summaryText = `导入完成：${result.importedContent} 条内容，${result.importedTasks} 个任务`
       if (!result.success) {
         message.error(result.errors[0] || '任务包导入失败')
         return
       }
 
-      message.success(`导入成功：${result.importedContent} 条内容，${result.importedTasks} 个任务`)
-      await loadContents()
+      if (result.partialSuccess) {
+        message.warning(`${summaryText}；${result.errors.length} 条未导入`)
+      } else if (result.skippedRows > 0) {
+        message.info(`${summaryText}；跳过 ${result.skippedRows} 条重复任务`)
+      } else {
+        message.success(summaryText)
+      }
+
+      if (result.importedContent > 0 || result.importedTasks > 0) {
+        await loadContents()
+      }
     } catch (error) {
       message.error(error instanceof Error ? error.message : '任务包导入失败')
     }
