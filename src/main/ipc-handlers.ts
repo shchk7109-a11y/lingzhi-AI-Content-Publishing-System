@@ -5,6 +5,8 @@ import { BitBrowserManager } from '../core/BitBrowserManager'
 import { WindowPool } from '../core/WindowPool'
 import { HumanBehaviorEngine } from '../core/HumanBehaviorEngine'
 import { AccountAliasService } from '../core/accounts/AccountAliasService'
+import { TaskPackageImporter } from '../core/task-package/TaskPackageImporter'
+import { TaskPackageReader } from '../core/task-package/TaskPackageReader'
 import { XiaohongshuPublisher } from '../core/publishers/XiaohongshuPublisher'
 import type { PublishContent } from '../core/publishers/BasePublisher'
 import { DEFAULT_SETTINGS } from '../shared/constants'
@@ -18,6 +20,8 @@ const matchRuleDao = new MatchRuleDao()
 const bitManager = new BitBrowserManager()
 const windowPool = new WindowPool(bitManager, 1)
 const accountAliasService = new AccountAliasService()
+const taskPackageReader = new TaskPackageReader()
+const taskPackageImporter = new TaskPackageImporter()
 
 // 内存中的设置（启动时用默认值，可通过settings:update修改）
 let currentSettings: SystemSettings = { ...DEFAULT_SETTINGS } as SystemSettings
@@ -97,6 +101,28 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('accounts:generateAlias', (_event, input: { platform: string; bloggerId: string; sequence: number }) => {
     return accountAliasService.generateAlias(input)
+  })
+
+  ipcMain.handle('taskPackage:preview', (_event, packageDir: string) => {
+    return taskPackageReader.read(packageDir)
+  })
+
+  ipcMain.handle('taskPackage:import', (_event, packageDir: string) => {
+    const readResult = taskPackageReader.read(packageDir)
+    if (!readResult.ok) {
+      return {
+        success: false,
+        importedContent: 0,
+        importedTasks: 0,
+        errors: readResult.errors
+      }
+    }
+
+    const importResult = taskPackageImporter.import(readResult.value)
+    return {
+      success: importResult.errors.length === 0,
+      ...importResult
+    }
   })
 
   // ===== 匹配记录操作 =====
@@ -237,6 +263,15 @@ export function registerIpcHandlers(): void {
       filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
     })
     return result.filePaths
+  })
+
+  ipcMain.handle('dialog:selectDirectory', async () => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory']
+    })
+    return result.canceled ? null : result.filePaths[0] || null
   })
 
   // ===== 发布测试 =====

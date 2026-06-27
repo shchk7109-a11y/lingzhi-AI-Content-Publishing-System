@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Button, Space, Table, Tag, Typography, Upload, Input, Select, Empty, message } from 'antd'
+import { Button, Space, Table, Tag, Typography, Input, Select, Empty, message } from 'antd'
 import { UploadOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { useContentStore } from '../stores/contentStore'
 import type { ContentItem } from '../../shared/types'
@@ -55,8 +55,22 @@ function ContentPool(): JSX.Element {
     loadContents()
   }, [loadContents])
 
-  const handleImport = (): void => {
-    message.info('Excel导入功能开发中')
+  const handleImport = async (): Promise<void> => {
+    try {
+      const packageDir = await window.api.dialog.selectDirectory()
+      if (!packageDir) return
+
+      const result = await window.api.taskPackage.import(packageDir)
+      if (!result.success) {
+        message.error(result.errors[0] || '任务包导入失败')
+        return
+      }
+
+      message.success(`导入成功：${result.importedContent} 条内容，${result.importedTasks} 个任务`)
+      await loadContents()
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '任务包导入失败')
+    }
   }
 
   return (
@@ -64,9 +78,7 @@ function ContentPool(): JSX.Element {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0, color: '#1A5C3A' }}>内容池管理</Title>
         <Space>
-          <Upload accept=".xlsx,.xls" showUploadList={false} beforeUpload={() => false} onChange={handleImport}>
-            <Button icon={<UploadOutlined />} type="primary">导入Excel</Button>
-          </Upload>
+          <Button icon={<UploadOutlined />} type="primary" onClick={handleImport}>导入任务包</Button>
           <Button icon={<ReloadOutlined />} onClick={() => loadContents()}>刷新</Button>
         </Space>
       </div>
@@ -114,7 +126,7 @@ function ContentPool(): JSX.Element {
         loading={loading}
         pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
         size="middle"
-        locale={{ emptyText: <Empty description="内容池为空，请导入Excel" /> }}
+        locale={{ emptyText: <Empty description="内容池为空，请导入任务包" /> }}
       />
     </div>
   )

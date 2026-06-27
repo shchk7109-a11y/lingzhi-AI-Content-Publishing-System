@@ -25,6 +25,17 @@ const api = {
       ipcRenderer.invoke('accounts:generateAlias', input)
   },
 
+  // 任务包
+  taskPackage: {
+    preview: (packageDir: string) => ipcRenderer.invoke('taskPackage:preview', packageDir),
+    import: (packageDir: string) => ipcRenderer.invoke('taskPackage:import', packageDir) as Promise<{
+      success: boolean
+      importedContent: number
+      importedTasks: number
+      errors: string[]
+    }>
+  },
+
   // 匹配记录
   matchRecords: {
     getAll: (filters?: Record<string, string>) => ipcRenderer.invoke('db:matchRecords:getAll', filters),
@@ -81,7 +92,8 @@ const api = {
 
   // 文件对话框
   dialog: {
-    selectImages: () => ipcRenderer.invoke('dialog:selectImages') as Promise<string[]>
+    selectImages: () => ipcRenderer.invoke('dialog:selectImages') as Promise<string[]>,
+    selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory') as Promise<string | null>
   },
 
   // 窗口池
