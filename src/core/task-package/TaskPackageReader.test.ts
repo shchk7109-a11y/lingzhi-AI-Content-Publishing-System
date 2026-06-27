@@ -222,6 +222,29 @@ describe('TaskPackageReader', () => {
     })
   })
 
+  it('rejects supported media files that symlink outside the package', () => {
+    const outsideDir = createTempPackageDir()
+    const outsideFile = path.join(outsideDir, '1.jpg')
+    writeFileSync(outsideFile, 'outside image')
+    const packageDir = createPackage([validPublishRow()])
+    const mediaFile = path.join(packageDir, 'media', 'draft_001', '1.jpg')
+    rmSync(mediaFile)
+
+    try {
+      symlinkSync(outsideFile, mediaFile, 'file')
+    } catch {
+      expect(existsSync(mediaFile)).toBe(false)
+      return
+    }
+
+    const result = new TaskPackageReader().read(packageDir)
+
+    expect(result).toEqual({
+      ok: false,
+      errors: ['draft draft_001: media folder is missing or has no supported files']
+    })
+  })
+
   it('returns validation errors when row batch_id does not match manifest batch_id', () => {
     const packageDir = createPackage([validPublishRow({ batch_id: 'other_batch' })])
 

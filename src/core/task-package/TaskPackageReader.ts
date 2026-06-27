@@ -135,10 +135,24 @@ export class TaskPackageReader {
       return fs
         .readdirSync(folder)
         .filter((fileName) => SUPPORTED_MEDIA_EXTENSIONS.has(path.extname(fileName).toLowerCase()))
+        .filter((fileName) => this.isFileInsidePackage(path.join(folder, fileName), realPackageDir))
         .sort((left, right) => left.localeCompare(right))
         .map((fileName) => path.join(folder, fileName))
     } catch {
       return []
+    }
+  }
+
+  private isFileInsidePackage(filePath: string, realPackageDir: string): boolean {
+    try {
+      const stat = fs.statSync(filePath)
+      if (!stat.isFile()) return false
+
+      const realFilePath = fs.realpathSync(filePath)
+      const relativeFilePath = path.relative(realPackageDir, realFilePath)
+      return !relativeFilePath.startsWith('..') && !path.isAbsolute(relativeFilePath)
+    } catch {
+      return false
     }
   }
 
