@@ -42,8 +42,12 @@ class FakeStatement {
       return { changes: 1, lastInsertRowid: row.id as number }
     }
 
-    if (this.sql.includes('UPDATE tasks SET confirmed_at = datetime')) {
-      const task = this.database.tasks.find((row) => row.id === params[0])
+    if (this.sql.includes('UPDATE tasks') && this.sql.includes("SET confirmed_at = datetime('now')")) {
+      const task = this.database.tasks.find(
+        (row) => row.id === params[0] &&
+          row.require_manual_confirm === 1 &&
+          row.confirmed_at === null
+      )
       if (task) task.confirmed_at = '2026-06-27 10:00:00'
       return { changes: task ? 1 : 0, lastInsertRowid: 0 }
     }
@@ -92,6 +96,19 @@ class FakeStatement {
           const priorityDiff = Number(right.priority) - Number(left.priority)
           return priorityDiff || Number(left.id) - Number(right.id)
         })
+    }
+
+    if (this.sql.includes("WHERE t.status IN ('pending', 'queued')")) {
+      const limit = Number(params[0] ?? 10)
+      return this.database.tasks
+        .filter((task) => task.status === 'pending' || task.status === 'queued')
+        .filter((task) => task.scheduled_at === null || String(task.scheduled_at) <= '2026-06-27 10:00:00')
+        .filter((task) => task.require_manual_confirm === 0 || task.confirmed_at !== null)
+        .sort((left, right) => {
+          const priorityDiff = Number(right.priority) - Number(left.priority)
+          return priorityDiff || Number(left.id) - Number(right.id)
+        })
+        .slice(0, limit)
     }
 
     return []
@@ -151,7 +168,9 @@ class FakeDatabase {
       require_manual_confirm: params[11],
       confirmed_at: null,
       risk_level: params[12],
-      audit_payload: params[13]
+      audit_payload: params[13],
+      status: 'pending',
+      retry_count: 0
     }
     this.tasks.push(row)
     return row
@@ -335,12 +354,72 @@ describe('database DAOs', () => {
       priority: 5
     })
 
-    taskDao.confirmTask(taskId)
+    expect(taskDao.confirmTask(taskId)).toBe(true)
 
     expect(taskDao.getById(taskId)).toMatchObject({
       id: taskId,
       confirmed_at: '2026-06-27 10:00:00'
     })
     expect(taskDao.getPendingConfirmation()).toEqual([])
+    expect(taskDao.confirmTask(taskId)).toBe(false)
+    expect(taskDao.confirmTask(999)).toBe(false)
+  })
+
+  it('does not confirm non-manual tasks', () => {
+    const accountDao = new AccountDao()
+    const accountId = accountDao.insert({
+      nickname: '免确认账号',
+      platform: 'xiaohongshu',
+      account_alias: 'xhs_no_confirm_001'
+    })
+    const taskDao = new TaskDao()
+    const taskId = taskDao.insert({
+      account_id: accountId,
+      platform: 'xiaohongshu',
+      action_type: 'browse',
+      require_manual_confirm: false,
+      priority: 5
+    })
+
+    expect(taskDao.confirmTask(taskId)).toBe(false)
+    expect(taskDao.getById(taskId)).toMatchObject({
+      id: taskId,
+      confirmed_at: null
+    })
+  })
+
+  it('only queues tasks that are confirmed or exempt from manual confirmation', () => {
+    const accountDao = new AccountDao()
+    const accountId = accountDao.insert({
+      nickname: '调度账号',
+      platform: 'xiaohongshu',
+      account_alias: 'xhs_queue_001'
+    })
+    const taskDao = new TaskDao()
+    const unconfirmedTaskId = taskDao.insert({
+      account_id: accountId,
+      platform: 'xiaohongshu',
+      action_type: 'comment',
+      require_manual_confirm: true,
+      priority: 100
+    })
+    const confirmedTaskId = taskDao.insert({
+      account_id: accountId,
+      platform: 'xiaohongshu',
+      action_type: 'publish',
+      require_manual_confirm: true,
+      priority: 50
+    })
+    const exemptTaskId = taskDao.insert({
+      account_id: accountId,
+      platform: 'xiaohongshu',
+      action_type: 'browse',
+      require_manual_confirm: false,
+      priority: 10
+    })
+    taskDao.confirmTask(confirmedTaskId)
+
+    expect(taskDao.getQueuedTasks().map((task) => task.id)).toEqual([confirmedTaskId, exemptTaskId])
+    expect(taskDao.getQueuedTasks().map((task) => task.id)).not.toContain(unconfirmedTaskId)
   })
 })

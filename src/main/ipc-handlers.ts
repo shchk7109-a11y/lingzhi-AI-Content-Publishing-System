@@ -158,8 +158,8 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('db:tasks:confirm', (_event, id: number) => {
-    taskDao.confirmTask(id)
-    return { success: true }
+    const confirmed = taskDao.confirmTask(id)
+    return { success: confirmed, confirmed }
   })
 
   ipcMain.handle('db:tasks:pendingConfirmation', () => {

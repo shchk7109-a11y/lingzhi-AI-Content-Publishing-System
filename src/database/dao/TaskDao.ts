@@ -93,8 +93,15 @@ export class TaskDao {
     return this.db.prepare(sql).all(...params) as Record<string, unknown>[]
   }
 
-  confirmTask(id: number): void {
-    this.db.prepare("UPDATE tasks SET confirmed_at = datetime('now') WHERE id = ?").run(id)
+  confirmTask(id: number): boolean {
+    const result = this.db.prepare(`
+      UPDATE tasks
+      SET confirmed_at = datetime('now')
+      WHERE id = ?
+        AND require_manual_confirm = 1
+        AND confirmed_at IS NULL
+    `).run(id)
+    return result.changes > 0
   }
 
   getPendingConfirmation(): Record<string, unknown>[] {
@@ -148,6 +155,7 @@ export class TaskDao {
       LEFT JOIN accounts a ON t.account_id = a.id
       WHERE t.status IN ('pending', 'queued')
       AND (t.scheduled_at IS NULL OR t.scheduled_at <= datetime('now'))
+      AND (t.require_manual_confirm = 0 OR t.confirmed_at IS NOT NULL)
       ORDER BY t.priority DESC, t.id ASC
       LIMIT ?
     `).all(limit) as Record<string, unknown>[]

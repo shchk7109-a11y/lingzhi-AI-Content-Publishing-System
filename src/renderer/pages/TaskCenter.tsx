@@ -101,7 +101,12 @@ function TaskCenter(): JSX.Element {
 
   const handleConfirmTask = async (taskId: number): Promise<void> => {
     try {
-      await window.api.tasks.confirm(taskId)
+      const result = await window.api.tasks.confirm(taskId)
+      if (!result.success) {
+        message.warning('任务无需确认或已确认')
+        await loadTasks()
+        return
+      }
       message.success('任务已确认')
       await loadTasks()
     } catch (error) {
@@ -302,6 +307,7 @@ function TaskCenter(): JSX.Element {
         rowKey="id"
         loading={loading}
         pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
+        scroll={{ x: 1600 }}
         size="middle"
         locale={{ emptyText: <Empty description="暂无任务" /> }}
       />
