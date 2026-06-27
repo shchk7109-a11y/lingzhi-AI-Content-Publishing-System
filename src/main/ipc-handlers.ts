@@ -4,6 +4,7 @@ import { ContentDao, AccountDao, MatchRecordDao, TaskDao, MatchRuleDao } from '.
 import { BitBrowserManager } from '../core/BitBrowserManager'
 import { WindowPool } from '../core/WindowPool'
 import { HumanBehaviorEngine } from '../core/HumanBehaviorEngine'
+import { AccountAliasService } from '../core/accounts/AccountAliasService'
 import { XiaohongshuPublisher } from '../core/publishers/XiaohongshuPublisher'
 import type { PublishContent } from '../core/publishers/BasePublisher'
 import { DEFAULT_SETTINGS } from '../shared/constants'
@@ -16,6 +17,7 @@ const taskDao = new TaskDao()
 const matchRuleDao = new MatchRuleDao()
 const bitManager = new BitBrowserManager()
 const windowPool = new WindowPool(bitManager, 1)
+const accountAliasService = new AccountAliasService()
 
 // 内存中的设置（启动时用默认值，可通过settings:update修改）
 let currentSettings: SystemSettings = { ...DEFAULT_SETTINGS } as SystemSettings
@@ -91,6 +93,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('db:accounts:delete', (_event, id: number) => {
     accountDao.delete(id)
     return { success: true }
+  })
+
+  ipcMain.handle('accounts:generateAlias', (_event, input: { platform: string; bloggerId: string; sequence: number }) => {
+    return accountAliasService.generateAlias(input)
   })
 
   // ===== 匹配记录操作 =====
@@ -198,7 +204,7 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('settings:update', (_event, key: string, value: unknown) => {
-    ;(currentSettings as Record<string, unknown>)[key] = value
+    (currentSettings as Record<string, unknown>)[key] = value
 
     // 如果更新了Bit端口，同步到BitBrowserManager
     if (key === 'bitApiPort' && typeof value === 'number') {

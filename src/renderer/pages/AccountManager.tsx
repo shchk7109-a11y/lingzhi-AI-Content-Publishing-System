@@ -17,6 +17,7 @@ const columns = [
     title: '平台', dataIndex: 'platform', key: 'platform', width: 100,
     render: (v: string) => <Tag>{v}</Tag>
   },
+  { title: '账号别名', dataIndex: 'account_alias', key: 'account_alias', width: 180, ellipsis: true },
   { title: '客户ID', dataIndex: 'customer_id', key: 'customer_id', width: 120, ellipsis: true },
   {
     title: '等级', dataIndex: 'account_level', key: 'account_level', width: 90,

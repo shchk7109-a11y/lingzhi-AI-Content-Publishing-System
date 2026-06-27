@@ -31,6 +31,7 @@ export interface Account {
   id: number
   nickname: string
   platform: string
+  account_alias?: string | null
   bit_profile_id: string
   customer_id: string
   persona: AccountPersona

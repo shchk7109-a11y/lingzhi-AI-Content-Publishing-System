@@ -20,7 +20,9 @@ const api = {
     batchInsert: (items: Record<string, unknown>[]) => ipcRenderer.invoke('db:accounts:batchInsert', items),
     updatePersona: (id: number, persona: Record<string, string>) => ipcRenderer.invoke('db:accounts:updatePersona', id, persona),
     updateStatus: (id: number, status: string) => ipcRenderer.invoke('db:accounts:updateStatus', id, status),
-    delete: (id: number) => ipcRenderer.invoke('db:accounts:delete', id)
+    delete: (id: number) => ipcRenderer.invoke('db:accounts:delete', id),
+    generateAlias: (input: { platform: string; bloggerId: string; sequence: number }) =>
+      ipcRenderer.invoke('accounts:generateAlias', input)
   },
 
   // 匹配记录
