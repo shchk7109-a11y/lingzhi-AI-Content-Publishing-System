@@ -1,29 +1,35 @@
 import Database from 'better-sqlite3'
 import { getDatabase } from '../db'
+import type { TaskInsertData } from './task-action-types'
 
 export class TaskDao {
   private get db(): Database.Database {
     return getDatabase()
   }
 
-  insert(data: {
-    match_record_id?: number
-    account_id: number
-    content_id: number
-    platform: string
-    priority?: number
-    scheduled_at?: string
-  }): number {
+  insert(data: TaskInsertData): number {
     const result = this.db.prepare(`
-      INSERT INTO tasks (match_record_id, account_id, content_id, platform, priority, scheduled_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (
+        match_record_id, account_id, content_id, platform, priority, scheduled_at,
+        batch_id, draft_id, action_type, target_note_url, comment_text,
+        require_manual_confirm, risk_level, audit_payload
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.match_record_id || null,
       data.account_id,
-      data.content_id,
+      data.content_id ?? null,
       data.platform,
       data.priority || 0,
-      data.scheduled_at || null
+      data.scheduled_at || null,
+      data.batch_id || '',
+      data.draft_id || '',
+      data.action_type || 'publish',
+      data.target_note_url || '',
+      data.comment_text || '',
+      data.require_manual_confirm === false ? 0 : 1,
+      data.risk_level || 'low',
+      JSON.stringify(data.audit_payload || {})
     )
     return result.lastInsertRowid as number
   }

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   nickname TEXT NOT NULL,
   platform TEXT NOT NULL,
   bit_profile_id TEXT UNIQUE,
+  account_alias TEXT,
   customer_id TEXT,
   persona TEXT DEFAULT '{}',
   account_level TEXT DEFAULT 'new',
@@ -34,9 +35,11 @@ CREATE TABLE IF NOT EXISTS accounts (
   proxy_config TEXT DEFAULT '{}',
   region TEXT DEFAULT '',
   daily_limit INTEGER DEFAULT 2,
+  daily_interaction_limit INTEGER DEFAULT 20,
   weekly_target INTEGER DEFAULT 10,
   publish_count_week INTEGER DEFAULT 0,
   last_publish_at DATETIME,
+  last_health_check_at DATETIME,
   status TEXT DEFAULT 'active',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -61,8 +64,17 @@ CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   match_record_id INTEGER,
   account_id INTEGER NOT NULL,
-  content_id INTEGER NOT NULL,
+  content_id INTEGER,
   platform TEXT NOT NULL,
+  batch_id TEXT DEFAULT '',
+  draft_id TEXT DEFAULT '',
+  action_type TEXT DEFAULT 'publish',
+  target_note_url TEXT DEFAULT '',
+  comment_text TEXT DEFAULT '',
+  require_manual_confirm INTEGER DEFAULT 1,
+  confirmed_at DATETIME,
+  risk_level TEXT DEFAULT 'low',
+  audit_payload TEXT DEFAULT '{}',
   status TEXT DEFAULT 'pending',
   priority INTEGER DEFAULT 0,
   scheduled_at DATETIME,
@@ -89,6 +101,20 @@ CREATE TABLE IF NOT EXISTS publish_logs (
   screenshot_path TEXT,
   error TEXT,
   FOREIGN KEY (task_id) REFERENCES tasks(id)
+);
+
+-- 5.1 任务审计日志
+CREATE TABLE IF NOT EXISTS task_audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
+  account_id INTEGER,
+  action_type TEXT NOT NULL,
+  event_name TEXT NOT NULL,
+  event_payload TEXT DEFAULT '{}',
+  screenshot_path TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (task_id) REFERENCES tasks(id),
+  FOREIGN KEY (account_id) REFERENCES accounts(id)
 );
 
 -- 6. 代理IP池
@@ -129,3 +155,7 @@ CREATE INDEX IF NOT EXISTS idx_content_pool_status_tags ON content_pool(status, 
 CREATE INDEX IF NOT EXISTS idx_proxy_pool_city_status ON proxy_pool(city, status);
 CREATE INDEX IF NOT EXISTS idx_accounts_customer ON accounts(customer_id);
 CREATE INDEX IF NOT EXISTS idx_content_pool_draft ON content_pool(draft_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_alias_platform ON accounts(account_alias, platform);
+CREATE INDEX IF NOT EXISTS idx_tasks_batch_action ON tasks(batch_id, action_type);
+CREATE INDEX IF NOT EXISTS idx_tasks_confirmation ON tasks(require_manual_confirm, confirmed_at);
+CREATE INDEX IF NOT EXISTS idx_task_audit_logs_task ON task_audit_logs(task_id);

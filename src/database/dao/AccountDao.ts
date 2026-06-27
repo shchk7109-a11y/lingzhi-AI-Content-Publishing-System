@@ -1,27 +1,36 @@
 import Database from 'better-sqlite3'
 import { getDatabase } from '../db'
 
+interface AccountInsertData {
+  nickname: string
+  platform: string
+  bit_profile_id?: string
+  account_alias?: string
+  customer_id?: string
+  persona?: Record<string, string>
+  account_level?: string
+  proxy_type?: string
+  proxy_config?: Record<string, unknown>
+  region?: string
+  daily_limit?: number
+  daily_interaction_limit?: number
+  weekly_target?: number
+  last_health_check_at?: string
+}
+
 export class AccountDao {
   private get db(): Database.Database {
     return getDatabase()
   }
 
-  insert(data: {
-    nickname: string
-    platform: string
-    bit_profile_id?: string
-    customer_id?: string
-    persona?: Record<string, string>
-    account_level?: string
-    proxy_type?: string
-    proxy_config?: Record<string, unknown>
-    region?: string
-    daily_limit?: number
-    weekly_target?: number
-  }): number {
+  insert(data: AccountInsertData): number {
     const result = this.db.prepare(`
-      INSERT INTO accounts (nickname, platform, bit_profile_id, customer_id, persona, account_level, proxy_type, proxy_config, region, daily_limit, weekly_target)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO accounts (
+        nickname, platform, bit_profile_id, customer_id, persona, account_level,
+        proxy_type, proxy_config, region, daily_limit, weekly_target,
+        account_alias, daily_interaction_limit, last_health_check_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.nickname,
       data.platform,
@@ -33,7 +42,10 @@ export class AccountDao {
       JSON.stringify(data.proxy_config || {}),
       data.region || '',
       data.daily_limit ?? 2,
-      data.weekly_target ?? 10
+      data.weekly_target ?? 10,
+      data.account_alias || null,
+      data.daily_interaction_limit ?? 20,
+      data.last_health_check_at || null
     )
     return result.lastInsertRowid as number
   }
@@ -59,13 +71,18 @@ export class AccountDao {
       params.push(filters.customer_id)
     }
     if (filters?.search) {
-      sql += ' AND (nickname LIKE ? OR customer_id LIKE ?)'
+      sql += ' AND (nickname LIKE ? OR customer_id LIKE ? OR account_alias LIKE ?)'
       const term = `%${filters.search}%`
-      params.push(term, term)
+      params.push(term, term, term)
     }
 
     sql += ' ORDER BY created_at DESC'
     return this.db.prepare(sql).all(...params) as Record<string, unknown>[]
+  }
+
+  getByAlias(platform: string, accountAlias: string): Record<string, unknown> | undefined {
+    return this.db.prepare('SELECT * FROM accounts WHERE platform = ? AND account_alias = ?')
+      .get(platform, accountAlias) as Record<string, unknown> | undefined
   }
 
   updatePersona(id: number, persona: Record<string, string>): void {
@@ -91,16 +108,14 @@ export class AccountDao {
     this.db.prepare("UPDATE accounts SET status = ?, updated_at = datetime('now') WHERE id = ?").run(status, id)
   }
 
-  batchInsert(items: Array<{
-    nickname: string; platform: string; bit_profile_id?: string
-    customer_id?: string; persona?: Record<string, string>
-    account_level?: string; proxy_type?: string
-    proxy_config?: Record<string, unknown>; region?: string
-    daily_limit?: number; weekly_target?: number
-  }>): number {
+  batchInsert(items: AccountInsertData[]): number {
     const stmt = this.db.prepare(`
-      INSERT INTO accounts (nickname, platform, bit_profile_id, customer_id, persona, account_level, proxy_type, proxy_config, region, daily_limit, weekly_target)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO accounts (
+        nickname, platform, bit_profile_id, customer_id, persona, account_level,
+        proxy_type, proxy_config, region, daily_limit, weekly_target,
+        account_alias, daily_interaction_limit, last_health_check_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     let count = 0
@@ -116,7 +131,10 @@ export class AccountDao {
           JSON.stringify(item.proxy_config || {}),
           item.region || '',
           item.daily_limit ?? 2,
-          item.weekly_target ?? 10
+          item.weekly_target ?? 10,
+          item.account_alias || null,
+          item.daily_interaction_limit ?? 20,
+          item.last_health_check_at || null
         )
         if (result.changes > 0) count++
       }
