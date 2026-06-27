@@ -114,10 +114,26 @@ describe('database schema and migrations', () => {
         FOREIGN KEY (content_id) REFERENCES content_pool(id)
       );
 
+      CREATE TABLE publish_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        step TEXT NOT NULL,
+        action TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        duration_ms INTEGER DEFAULT 0,
+        screenshot_path TEXT,
+        error TEXT,
+        FOREIGN KEY (task_id) REFERENCES tasks(id)
+      );
+
+      CREATE INDEX idx_publish_logs_task ON publish_logs(task_id);
+
       INSERT INTO accounts (id, nickname, platform) VALUES (1, 'legacy account', 'xiaohongshu');
       INSERT INTO content_pool (id, title) VALUES (1, 'legacy content');
       INSERT INTO tasks (id, account_id, content_id, platform, status, priority)
       VALUES (1, 1, 1, 'xiaohongshu', 'pending', 5);
+      INSERT INTO publish_logs (id, task_id, step, action, duration_ms)
+      VALUES (1, 1, 'legacy_step', 'legacy_action', 120);
     `)
 
     return database
@@ -126,6 +142,11 @@ describe('database schema and migrations', () => {
   function taskContentIdNotNull(database: Database.Database): number | undefined {
     const columns = database.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string; notnull: number }>
     return columns.find((column) => column.name === 'content_id')?.notnull
+  }
+
+  function foreignKeyTargetTables(database: Database.Database, tableName: string): string[] {
+    const rows = database.prepare(`PRAGMA foreign_key_list(${tableName})`).all() as Array<{ table: string }>
+    return rows.map((row) => row.table)
   }
 
   it('creates the target schema for aliases, task actions, audit logs, and nullable task content', () => {
@@ -186,6 +207,29 @@ describe('database schema and migrations', () => {
         VALUES (1, NULL, 'xiaohongshu', 'batch_1', 'comment_1', 'comment')
       `).run()
     }).not.toThrow()
+
+    database.close()
+  })
+
+  it('preserves publish log foreign keys when rebuilding a legacy tasks table', () => {
+    const database = createLegacyDatabase()
+
+    runMigrations(database)
+
+    expect(foreignKeyTargetTables(database, 'publish_logs')).toContain('tasks')
+    expect(foreignKeyTargetTables(database, 'publish_logs')).not.toContain('tasks_old_content_not_null')
+    expect(database.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(database.prepare('SELECT task_id, step, action, duration_ms FROM publish_logs WHERE id = 1').get()).toMatchObject({
+      task_id: 1,
+      step: 'legacy_step',
+      action: 'legacy_action',
+      duration_ms: 120
+    })
+
+    expect(() => {
+      database.prepare("INSERT INTO publish_logs (task_id, step, action) VALUES (1, 'new_step', 'new_action')").run()
+    }).not.toThrow()
+    expect(database.prepare('SELECT COUNT(*) as count FROM publish_logs').get()).toMatchObject({ count: 2 })
 
     database.close()
   })
