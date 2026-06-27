@@ -124,6 +124,11 @@ export class TaskPackageReader {
     if (relativeFolder.startsWith('..') || path.isAbsolute(relativeFolder)) return []
 
     try {
+      const realPackageDir = fs.realpathSync(packageDir)
+      const realFolder = fs.realpathSync(folder)
+      const realRelativeFolder = path.relative(realPackageDir, realFolder)
+      if (realRelativeFolder.startsWith('..') || path.isAbsolute(realRelativeFolder)) return []
+
       const stat = fs.statSync(folder)
       if (!stat.isDirectory()) return []
 

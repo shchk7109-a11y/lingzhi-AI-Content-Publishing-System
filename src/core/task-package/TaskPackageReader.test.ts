@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import * as XLSX from 'xlsx'
@@ -153,6 +153,18 @@ describe('TaskPackageReader', () => {
     expect(existsSync(path.join(unsupportedMediaDir, 'media', 'draft_001', 'notes.txt'))).toBe(true)
   })
 
+  it('returns validation errors when publish media folder is empty', () => {
+    const packageDir = createPackage([validPublishRow()])
+    rmSync(path.join(packageDir, 'media', 'draft_001', '1.jpg'))
+
+    const result = new TaskPackageReader().read(packageDir)
+
+    expect(result).toEqual({
+      ok: false,
+      errors: ['draft draft_001: media folder is missing or has no supported files']
+    })
+  })
+
   it('returns validation errors when publish media_folder points to a file', () => {
     const packageDir = createPackage([validPublishRow({ media_folder: 'media/not-a-folder.jpg' })])
     writeFileSync(path.join(packageDir, 'media', 'not-a-folder.jpg'), 'not a folder')
@@ -182,6 +194,25 @@ describe('TaskPackageReader', () => {
     const outsideDir = createTempPackageDir()
     writeFileSync(path.join(outsideDir, '1.jpg'), 'outside image')
     const packageDir = createPackage([validPublishRow({ media_folder: `../${path.basename(outsideDir)}` })])
+
+    const result = new TaskPackageReader().read(packageDir)
+
+    expect(result).toEqual({
+      ok: false,
+      errors: ['draft draft_001: media folder is missing or has no supported files']
+    })
+  })
+
+  it('rejects publish media folders that symlink outside the package', () => {
+    const outsideDir = createTempPackageDir()
+    writeFileSync(path.join(outsideDir, '1.jpg'), 'outside image')
+    const packageDir = createPackage([validPublishRow({ media_folder: 'media/linked' })])
+
+    try {
+      symlinkSync(outsideDir, path.join(packageDir, 'media', 'linked'), 'dir')
+    } catch {
+      return
+    }
 
     const result = new TaskPackageReader().read(packageDir)
 
