@@ -139,6 +139,36 @@ describe('database schema and migrations', () => {
     return database
   }
 
+  function createLegacyDatabaseWithAuditLogs(): Database.Database {
+    const database = createLegacyDatabase()
+
+    database.exec(`
+      CREATE TABLE task_audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        account_id INTEGER,
+        action_type TEXT NOT NULL,
+        event_name TEXT NOT NULL,
+        event_payload TEXT DEFAULT '{}',
+        screenshot_path TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (task_id) REFERENCES tasks(id),
+        FOREIGN KEY (account_id) REFERENCES accounts(id)
+      );
+
+      CREATE INDEX idx_task_audit_logs_task ON task_audit_logs(task_id);
+
+      INSERT INTO task_audit_logs (
+        id, task_id, account_id, action_type, event_name, event_payload, screenshot_path
+      )
+      VALUES (
+        1, 1, 1, 'publish', 'legacy_audit_event', '{"legacy":true}', '/tmp/legacy-audit.png'
+      );
+    `)
+
+    return database
+  }
+
   function taskContentIdNotNull(database: Database.Database): number | undefined {
     const columns = database.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string; notnull: number }>
     return columns.find((column) => column.name === 'content_id')?.notnull
@@ -230,6 +260,38 @@ describe('database schema and migrations', () => {
       database.prepare("INSERT INTO publish_logs (task_id, step, action) VALUES (1, 'new_step', 'new_action')").run()
     }).not.toThrow()
     expect(database.prepare('SELECT COUNT(*) as count FROM publish_logs').get()).toMatchObject({ count: 2 })
+
+    database.close()
+  })
+
+  it('preserves audit log foreign keys when rebuilding a legacy tasks table', () => {
+    const database = createLegacyDatabaseWithAuditLogs()
+
+    runMigrations(database)
+
+    expect(foreignKeyTargetTables(database, 'task_audit_logs')).toContain('tasks')
+    expect(foreignKeyTargetTables(database, 'task_audit_logs')).not.toContain('tasks_old_content_not_null')
+    expect(database.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(database.prepare(`
+      SELECT task_id, account_id, action_type, event_name, event_payload, screenshot_path
+      FROM task_audit_logs
+      WHERE id = 1
+    `).get()).toMatchObject({
+      task_id: 1,
+      account_id: 1,
+      action_type: 'publish',
+      event_name: 'legacy_audit_event',
+      event_payload: '{"legacy":true}',
+      screenshot_path: '/tmp/legacy-audit.png'
+    })
+
+    expect(() => {
+      database.prepare(`
+        INSERT INTO task_audit_logs (task_id, account_id, action_type, event_name, event_payload)
+        VALUES (1, 1, 'comment', 'new_audit_event', '{"new":true}')
+      `).run()
+    }).not.toThrow()
+    expect(database.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_task_audit_logs_task'").get()).toBeTruthy()
 
     database.close()
   })
