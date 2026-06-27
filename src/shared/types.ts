@@ -71,13 +71,22 @@ export interface MatchRecord {
 // 发布任务
 export interface Task {
   id: number
-  match_record_id: number
+  match_record_id: number | null
   account_id: number
-  content_id: number
+  content_id: number | null
   platform: string
+  batch_id: string
+  draft_id: string
+  action_type: 'publish' | 'comment' | 'favorite' | 'collect' | 'browse'
+  target_note_url: string
+  comment_text: string
+  require_manual_confirm: number | boolean
+  confirmed_at: string | null
+  risk_level: 'low' | 'medium' | 'high'
+  audit_payload: string
   status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'timeout'
   priority: number
-  scheduled_at: string
+  scheduled_at: string | null
   started_at: string | null
   finished_at: string | null
   result_url: string | null
@@ -85,6 +94,9 @@ export interface Task {
   retry_count: number
   screenshot_path: string | null
   last_step: string | null
+  content_title?: string | null
+  account_nickname?: string | null
+  account_alias?: string | null
 }
 
 // 匹配规则

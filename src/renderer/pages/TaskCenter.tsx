@@ -21,7 +21,21 @@ const statusMap: Record<string, { color: string; text: string }> = {
   timeout: { color: 'warning', text: '超时' }
 }
 
-type TaskRow = Task & { content_title?: string; account_nickname?: string }
+const actionMap: Record<string, { color: string; text: string }> = {
+  publish: { color: 'blue', text: '发布' },
+  comment: { color: 'gold', text: '评论' },
+  favorite: { color: 'purple', text: '点赞' },
+  collect: { color: 'cyan', text: '收藏' },
+  browse: { color: 'default', text: '浏览' }
+}
+
+const riskMap: Record<string, { color: string; text: string }> = {
+  low: { color: 'success', text: '低' },
+  medium: { color: 'warning', text: '中' },
+  high: { color: 'error', text: '高' }
+}
+
+type TaskRow = Task
 
 interface StepStatus {
   step: string
@@ -80,6 +94,19 @@ function TaskCenter(): JSX.Element {
       await window.api.tasks.updateStatus(taskId, 'queued', { error_log: '' })
       loadTasks()
     } catch { /* ignore */ }
+  }
+
+  const needsManualConfirmation = (task: TaskRow): boolean =>
+    (task.require_manual_confirm === true || task.require_manual_confirm === 1) && !task.confirmed_at
+
+  const handleConfirmTask = async (taskId: number): Promise<void> => {
+    try {
+      await window.api.tasks.confirm(taskId)
+      message.success('任务已确认')
+      await loadTasks()
+    } catch (error) {
+      message.error(`确认失败: ${(error as Error).message}`)
+    }
   }
 
   // 加载Bit Profile列表
@@ -178,9 +205,21 @@ function TaskCenter(): JSX.Element {
 
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
-    { title: '内容', dataIndex: 'content_title', key: 'content_title', ellipsis: true },
-    { title: '账号', dataIndex: 'account_nickname', key: 'account_nickname', width: 120 },
+    { title: '内容', dataIndex: 'content_title', key: 'content_title', width: 180, ellipsis: true },
+    { title: '账号', dataIndex: 'account_nickname', key: 'account_nickname', width: 120, ellipsis: true },
+    { title: '账号别名', dataIndex: 'account_alias', key: 'account_alias', width: 150, ellipsis: true },
     { title: '平台', dataIndex: 'platform', key: 'platform', width: 90, render: (v: string) => <Tag>{v}</Tag> },
+    {
+      title: '动作',
+      dataIndex: 'action_type',
+      key: 'action_type',
+      width: 90,
+      render: (value: string) => {
+        const info = actionMap[value || 'publish'] || { color: 'default', text: value || '发布' }
+        return <Tag color={info.color}>{info.text}</Tag>
+      }
+    },
+    { title: '目标', dataIndex: 'target_note_url', key: 'target_note_url', width: 180, ellipsis: true, render: (value: string) => value || '-' },
     {
       title: '状态', dataIndex: 'status', key: 'status', width: 90,
       render: (v: string) => {
@@ -188,9 +227,33 @@ function TaskCenter(): JSX.Element {
         return <Tag color={info.color}>{info.text}</Tag>
       }
     },
+    {
+      title: '风险',
+      dataIndex: 'risk_level',
+      key: 'risk_level',
+      width: 70,
+      render: (value: string) => {
+        const info = riskMap[value || 'low'] || { color: 'default', text: value || '低' }
+        return <Tag color={info.color}>{info.text}</Tag>
+      }
+    },
     { title: '重试', dataIndex: 'retry_count', key: 'retry_count', width: 60 },
     { title: '计划时间', dataIndex: 'scheduled_at', key: 'scheduled_at', width: 165 },
     { title: '完成时间', dataIndex: 'finished_at', key: 'finished_at', width: 165 },
+    {
+      title: '确认',
+      key: 'confirm',
+      width: 90,
+      render: (_: unknown, record: TaskRow) => {
+        if (needsManualConfirmation(record)) {
+          return <Button size="small" onClick={() => handleConfirmTask(record.id)}>确认</Button>
+        }
+
+        return record.require_manual_confirm
+          ? <Tag color="success">已确认</Tag>
+          : <Tag>免确认</Tag>
+      }
+    },
     {
       title: '操作', key: 'actions', width: 80,
       render: (_: unknown, record: TaskRow) =>

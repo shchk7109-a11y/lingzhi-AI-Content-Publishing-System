@@ -36,7 +36,7 @@ export class TaskDao {
 
   getById(id: number): Record<string, unknown> | undefined {
     return this.db.prepare(`
-      SELECT t.*, cp.title as content_title, a.nickname as account_nickname
+      SELECT t.*, cp.title as content_title, a.nickname as account_nickname, a.account_alias
       FROM tasks t
       LEFT JOIN content_pool cp ON t.content_id = cp.id
       LEFT JOIN accounts a ON t.account_id = a.id
@@ -68,7 +68,7 @@ export class TaskDao {
 
   getAll(filters?: { status?: string; platform?: string; account_id?: number }): Record<string, unknown>[] {
     let sql = `
-      SELECT t.*, cp.title as content_title, a.nickname as account_nickname
+      SELECT t.*, cp.title as content_title, a.nickname as account_nickname, a.account_alias
       FROM tasks t
       LEFT JOIN content_pool cp ON t.content_id = cp.id
       LEFT JOIN accounts a ON t.account_id = a.id
@@ -91,6 +91,21 @@ export class TaskDao {
 
     sql += ' ORDER BY t.priority DESC, t.id DESC'
     return this.db.prepare(sql).all(...params) as Record<string, unknown>[]
+  }
+
+  confirmTask(id: number): void {
+    this.db.prepare("UPDATE tasks SET confirmed_at = datetime('now') WHERE id = ?").run(id)
+  }
+
+  getPendingConfirmation(): Record<string, unknown>[] {
+    return this.db.prepare(`
+      SELECT t.*, cp.title as content_title, a.nickname as account_nickname, a.account_alias
+      FROM tasks t
+      LEFT JOIN content_pool cp ON t.content_id = cp.id
+      LEFT JOIN accounts a ON t.account_id = a.id
+      WHERE t.require_manual_confirm = 1 AND t.confirmed_at IS NULL
+      ORDER BY t.priority DESC, t.id ASC
+    `).all() as Record<string, unknown>[]
   }
 
   updateStatus(id: number, status: string, extra?: {
@@ -116,7 +131,7 @@ export class TaskDao {
 
   getRunningTasks(): Record<string, unknown>[] {
     return this.db.prepare(`
-      SELECT t.*, cp.title as content_title, a.nickname as account_nickname
+      SELECT t.*, cp.title as content_title, a.nickname as account_nickname, a.account_alias
       FROM tasks t
       LEFT JOIN content_pool cp ON t.content_id = cp.id
       LEFT JOIN accounts a ON t.account_id = a.id
@@ -127,7 +142,7 @@ export class TaskDao {
 
   getQueuedTasks(limit: number = 10): Record<string, unknown>[] {
     return this.db.prepare(`
-      SELECT t.*, cp.title as content_title, a.nickname as account_nickname
+      SELECT t.*, cp.title as content_title, a.nickname as account_nickname, a.account_alias
       FROM tasks t
       LEFT JOIN content_pool cp ON t.content_id = cp.id
       LEFT JOIN accounts a ON t.account_id = a.id

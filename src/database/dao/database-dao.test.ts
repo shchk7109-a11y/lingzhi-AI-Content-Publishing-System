@@ -42,6 +42,12 @@ class FakeStatement {
       return { changes: 1, lastInsertRowid: row.id as number }
     }
 
+    if (this.sql.includes('UPDATE tasks SET confirmed_at = datetime')) {
+      const task = this.database.tasks.find((row) => row.id === params[0])
+      if (task) task.confirmed_at = '2026-06-27 10:00:00'
+      return { changes: task ? 1 : 0, lastInsertRowid: 0 }
+    }
+
     return { changes: 1, lastInsertRowid: 0 }
   }
 
@@ -69,12 +75,32 @@ class FakeStatement {
       )
     }
 
+    if (this.sql.includes('WHERE t.require_manual_confirm = 1 AND t.confirmed_at IS NULL')) {
+      return this.database.tasks
+        .filter((task) => task.require_manual_confirm === 1 && task.confirmed_at === null)
+        .map((task) => {
+          const account = this.database.accounts.find((row) => row.id === task.account_id)
+          const content = this.database.contentPool.find((row) => row.id === task.content_id)
+          return {
+            ...task,
+            content_title: content?.title,
+            account_nickname: account?.nickname,
+            account_alias: account?.account_alias
+          }
+        })
+        .sort((left, right) => {
+          const priorityDiff = Number(right.priority) - Number(left.priority)
+          return priorityDiff || Number(left.id) - Number(right.id)
+        })
+    }
+
     return []
   }
 }
 
 class FakeDatabase {
   readonly accounts: Row[] = []
+  readonly contentPool: Row[] = []
   readonly tasks: Row[] = []
   readonly runs: Array<{ sql: string; params: unknown[] }> = []
 
@@ -123,6 +149,7 @@ class FakeDatabase {
       target_note_url: params[9],
       comment_text: params[10],
       require_manual_confirm: params[11],
+      confirmed_at: null,
       risk_level: params[12],
       audit_payload: params[13]
     }
@@ -222,5 +249,98 @@ describe('database DAOs', () => {
       risk_level: 'medium',
       audit_payload: JSON.stringify({ source: 'task-package', row: 3 })
     })
+  })
+
+  it('returns manual-confirmation tasks joined with content and account metadata in execution order', () => {
+    const accountDao = new AccountDao()
+    const firstAccountId = accountDao.insert({
+      nickname: '运营账号A',
+      platform: 'xiaohongshu',
+      account_alias: 'xhs_ops_001'
+    })
+    const secondAccountId = accountDao.insert({
+      nickname: '运营账号B',
+      platform: 'xiaohongshu',
+      account_alias: 'xhs_ops_002'
+    })
+    state.database?.contentPool.push(
+      { id: 101, title: '灵芝饮夏日笔记' },
+      { id: 102, title: '下午茶评论任务' }
+    )
+
+    const taskDao = new TaskDao()
+    const lowPriorityTaskId = taskDao.insert({
+      account_id: firstAccountId,
+      content_id: 101,
+      platform: 'xiaohongshu',
+      action_type: 'publish',
+      priority: 3,
+      require_manual_confirm: true,
+      risk_level: 'low'
+    })
+    const highPriorityTaskId = taskDao.insert({
+      account_id: secondAccountId,
+      content_id: 102,
+      platform: 'xiaohongshu',
+      action_type: 'comment',
+      target_note_url: 'https://www.xiaohongshu.com/explore/target',
+      comment_text: '看起来很适合下午喝',
+      priority: 9,
+      require_manual_confirm: true,
+      risk_level: 'medium'
+    })
+    taskDao.insert({
+      account_id: firstAccountId,
+      platform: 'xiaohongshu',
+      action_type: 'browse',
+      priority: 20,
+      require_manual_confirm: false
+    })
+
+    expect(taskDao.getPendingConfirmation()).toEqual([
+      expect.objectContaining({
+        id: highPriorityTaskId,
+        action_type: 'comment',
+        target_note_url: 'https://www.xiaohongshu.com/explore/target',
+        content_title: '下午茶评论任务',
+        account_nickname: '运营账号B',
+        account_alias: 'xhs_ops_002',
+        require_manual_confirm: 1,
+        confirmed_at: null,
+        risk_level: 'medium'
+      }),
+      expect.objectContaining({
+        id: lowPriorityTaskId,
+        action_type: 'publish',
+        content_title: '灵芝饮夏日笔记',
+        account_nickname: '运营账号A',
+        account_alias: 'xhs_ops_001'
+      })
+    ])
+  })
+
+  it('sets confirmed_at and removes the task from pending confirmation', () => {
+    const accountDao = new AccountDao()
+    const accountId = accountDao.insert({
+      nickname: '确认账号A',
+      platform: 'xiaohongshu',
+      account_alias: 'xhs_confirm_001'
+    })
+    const taskDao = new TaskDao()
+    const taskId = taskDao.insert({
+      account_id: accountId,
+      platform: 'xiaohongshu',
+      action_type: 'favorite',
+      require_manual_confirm: true,
+      priority: 5
+    })
+
+    taskDao.confirmTask(taskId)
+
+    expect(taskDao.getById(taskId)).toMatchObject({
+      id: taskId,
+      confirmed_at: '2026-06-27 10:00:00'
+    })
+    expect(taskDao.getPendingConfirmation()).toEqual([])
   })
 })

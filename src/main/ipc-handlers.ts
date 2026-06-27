@@ -157,6 +157,15 @@ export function registerIpcHandlers(): void {
     return { success: true }
   })
 
+  ipcMain.handle('db:tasks:confirm', (_event, id: number) => {
+    taskDao.confirmTask(id)
+    return { success: true }
+  })
+
+  ipcMain.handle('db:tasks:pendingConfirmation', () => {
+    return taskDao.getPendingConfirmation()
+  })
+
   ipcMain.handle('db:tasks:getRunning', () => {
     return taskDao.getRunningTasks()
   })
