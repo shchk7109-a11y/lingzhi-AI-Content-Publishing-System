@@ -164,4 +164,55 @@ describe('TaskPackageReader', () => {
       errors: ['draft draft_001: media folder is missing or has no supported files']
     })
   })
+
+  it('rejects absolute publish media folders outside the package', () => {
+    const outsideDir = createTempPackageDir()
+    writeFileSync(path.join(outsideDir, '1.jpg'), 'outside image')
+    const packageDir = createPackage([validPublishRow({ media_folder: outsideDir })])
+
+    const result = new TaskPackageReader().read(packageDir)
+
+    expect(result).toEqual({
+      ok: false,
+      errors: ['draft draft_001: media folder is missing or has no supported files']
+    })
+  })
+
+  it('rejects relative publish media folders that escape the package', () => {
+    const outsideDir = createTempPackageDir()
+    writeFileSync(path.join(outsideDir, '1.jpg'), 'outside image')
+    const packageDir = createPackage([validPublishRow({ media_folder: `../${path.basename(outsideDir)}` })])
+
+    const result = new TaskPackageReader().read(packageDir)
+
+    expect(result).toEqual({
+      ok: false,
+      errors: ['draft draft_001: media folder is missing or has no supported files']
+    })
+  })
+
+  it('returns validation errors when row batch_id does not match manifest batch_id', () => {
+    const packageDir = createPackage([validPublishRow({ batch_id: 'other_batch' })])
+
+    const result = new TaskPackageReader().read(packageDir)
+
+    expect(result).toEqual({
+      ok: false,
+      errors: ['row 2: batch_id must match manifest batch_id']
+    })
+  })
+
+  it('returns validation errors when draft_id is duplicated', () => {
+    const packageDir = createPackage([
+      validPublishRow(),
+      validPublishRow({ title: '第二篇', content: '第二篇内容。' })
+    ])
+
+    const result = new TaskPackageReader().read(packageDir)
+
+    expect(result).toEqual({
+      ok: false,
+      errors: ['row 3: draft_id must be unique in package']
+    })
+  })
 })

@@ -55,6 +55,18 @@ export class TaskPackageReader {
       }
     })
 
+    const seenDraftIds = new Set<string>()
+    rows.forEach((row, index) => {
+      if (row.batch_id !== manifest.batch_id) {
+        errors.push(`row ${index + 2}: batch_id must match manifest batch_id`)
+      }
+
+      if (seenDraftIds.has(row.draft_id)) {
+        errors.push(`row ${index + 2}: draft_id must be unique in package`)
+      }
+      seenDraftIds.add(row.draft_id)
+    })
+
     const mediaByDraftId: Record<string, string[]> = {}
     for (const row of rows) {
       if (row.action_type !== 'publish') continue
@@ -105,7 +117,11 @@ export class TaskPackageReader {
   }
 
   private collectMediaFiles(packageDir: string, mediaFolder: string): string[] {
-    const folder = path.isAbsolute(mediaFolder) ? mediaFolder : path.resolve(packageDir, mediaFolder)
+    if (path.isAbsolute(mediaFolder)) return []
+
+    const folder = path.resolve(packageDir, mediaFolder)
+    const relativeFolder = path.relative(packageDir, folder)
+    if (relativeFolder.startsWith('..') || path.isAbsolute(relativeFolder)) return []
 
     try {
       const stat = fs.statSync(folder)
