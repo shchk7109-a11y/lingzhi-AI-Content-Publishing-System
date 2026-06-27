@@ -9,7 +9,7 @@ function isAscii(char: string): boolean {
 }
 
 function isPunctuation(char: string): boolean {
-  return /[，。！？、；：""''…—,.!?;:'"()\-]/.test(char)
+  return /[，。！？、；：""''…—,.!?;:'"()-]/.test(char)
 }
 
 /**
