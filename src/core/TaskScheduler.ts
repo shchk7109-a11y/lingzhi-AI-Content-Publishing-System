@@ -1,6 +1,8 @@
 import { getDatabase } from '../database/db'
 import type { Task } from '../shared/types'
 
+const SUPPORTED_ACTION_TYPES = new Set(['publish', 'comment', 'favorite', 'collect', 'browse'])
+
 /**
  * 任务调度器
  * 令牌桶 + 时间窗双重调度机制
@@ -56,6 +58,8 @@ export class TaskScheduler {
     // 3. 按priority和scheduled_at排序
     // 4. 消费令牌，分发任务执行
     this.refillTokens()
+    const tasks = this.getNextTasks(Math.floor(this.tokenBucket))
+    this.validateRunnableTasks(tasks)
   }
 
   /**
@@ -89,10 +93,27 @@ export class TaskScheduler {
         `SELECT * FROM tasks
          WHERE status IN ('pending', 'queued')
          AND (scheduled_at IS NULL OR scheduled_at <= datetime('now'))
+         AND (require_manual_confirm = 0 OR confirmed_at IS NOT NULL)
          ORDER BY priority DESC, id ASC
          LIMIT ?`
       )
       .all(limit) as Task[]
+  }
+
+  /**
+   * 执行器接入前的任务动作白名单保护。
+   */
+  validateRunnableTasks(tasks: Task[]): Task[] {
+    return tasks.filter((task) => {
+      if (SUPPORTED_ACTION_TYPES.has(task.action_type)) {
+        return true
+      }
+
+      this.updateTaskStatus(task.id, 'failed', {
+        error_log: `Unsupported action_type: ${task.action_type}`
+      })
+      return false
+    })
   }
 
   /**
