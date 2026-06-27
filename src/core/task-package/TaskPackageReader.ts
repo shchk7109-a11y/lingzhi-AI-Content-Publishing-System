@@ -55,12 +55,17 @@ export class TaskPackageReader {
       }
     })
 
-    const mediaByDraftId = this.scanMedia(absolutePackageDir, manifest.media_root)
+    const mediaByDraftId: Record<string, string[]> = {}
     for (const row of rows) {
-      const mediaFiles = mediaByDraftId[row.draft_id]
-      if (row.action_type === 'publish' && (!mediaFiles || mediaFiles.length === 0)) {
-        errors.push(`draft ${row.draft_id}: media folder is missing or has no supported files`)
+      if (row.action_type !== 'publish') continue
+
+      const mediaFiles = this.collectMediaFiles(absolutePackageDir, row.media_folder)
+      if (mediaFiles.length > 0) {
+        mediaByDraftId[row.draft_id] = mediaFiles
+        continue
       }
+
+      errors.push(`draft ${row.draft_id}: media folder is missing or has no supported files`)
     }
 
     if (errors.length > 0) return { ok: false, errors }
@@ -99,24 +104,21 @@ export class TaskPackageReader {
     }
   }
 
-  private scanMedia(packageDir: string, mediaRoot: string): Record<string, string[]> {
-    const root = path.resolve(packageDir, mediaRoot)
-    const mediaByDraftId: Record<string, string[]> = {}
+  private collectMediaFiles(packageDir: string, mediaFolder: string): string[] {
+    const folder = path.isAbsolute(mediaFolder) ? mediaFolder : path.resolve(packageDir, mediaFolder)
 
-    if (!fs.existsSync(root)) return mediaByDraftId
+    try {
+      const stat = fs.statSync(folder)
+      if (!stat.isDirectory()) return []
 
-    for (const draftId of fs.readdirSync(root)) {
-      const draftDir = path.join(root, draftId)
-      if (!fs.statSync(draftDir).isDirectory()) continue
-
-      mediaByDraftId[draftId] = fs
-        .readdirSync(draftDir)
+      return fs
+        .readdirSync(folder)
         .filter((fileName) => SUPPORTED_MEDIA_EXTENSIONS.has(path.extname(fileName).toLowerCase()))
         .sort((left, right) => left.localeCompare(right))
-        .map((fileName) => path.join(draftDir, fileName))
+        .map((fileName) => path.join(folder, fileName))
+    } catch {
+      return []
     }
-
-    return mediaByDraftId
   }
 
   private errorMessage(error: unknown): string {

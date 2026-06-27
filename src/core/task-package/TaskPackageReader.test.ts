@@ -90,6 +90,20 @@ describe('TaskPackageReader', () => {
     expect(path.isAbsolute(result.value.mediaByDraftId.draft_001[0])).toBe(true)
   })
 
+  it('uses row media_folder when it differs from media draft folder', () => {
+    const packageDir = createPackage([validPublishRow({ media_folder: 'media/custom_folder' })])
+    mkdirSync(path.join(packageDir, 'media', 'custom_folder'), { recursive: true })
+    writeFileSync(path.join(packageDir, 'media', 'custom_folder', '1.jpg'), 'custom image')
+
+    const result = new TaskPackageReader().read(packageDir)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.mediaByDraftId.draft_001).toEqual([
+      path.join(packageDir, 'media', 'custom_folder', '1.jpg')
+    ])
+  })
+
   it('returns validation errors when manifest row_count does not match tasks rows', () => {
     const packageDir = createPackage([validPublishRow()], 2)
 
@@ -137,5 +151,17 @@ describe('TaskPackageReader', () => {
       errors: ['draft draft_001: media folder is missing or has no supported files']
     })
     expect(existsSync(path.join(unsupportedMediaDir, 'media', 'draft_001', 'notes.txt'))).toBe(true)
+  })
+
+  it('returns validation errors when publish media_folder points to a file', () => {
+    const packageDir = createPackage([validPublishRow({ media_folder: 'media/not-a-folder.jpg' })])
+    writeFileSync(path.join(packageDir, 'media', 'not-a-folder.jpg'), 'not a folder')
+
+    const result = new TaskPackageReader().read(packageDir)
+
+    expect(result).toEqual({
+      ok: false,
+      errors: ['draft draft_001: media folder is missing or has no supported files']
+    })
   })
 })
