@@ -20,7 +20,15 @@ class FakeMigrationDatabase {
     ['tasks', new Set(['id', 'account_id', 'content_id', 'platform'])]
   ])
 
-  prepare(sql: string): { all: () => FakeColumn[] } {
+  prepare(sql: string): { all?: () => FakeColumn[]; get?: (tableName?: string) => unknown } {
+    if (sql === "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?") {
+      return {
+        get: (tableName?: string) => this.columns.has(String(tableName))
+          ? { name: tableName }
+          : undefined
+      }
+    }
+
     const tableName = sql.match(/^PRAGMA table_info\((\w+)\)$/)?.[1]
     if (!tableName) {
       throw new Error(`Unexpected prepare SQL: ${sql}`)
@@ -195,11 +203,23 @@ describe('database schema and migrations', () => {
     expect(schema).toContain("risk_level TEXT DEFAULT 'low'")
     expect(schema).toContain("audit_payload TEXT DEFAULT '{}'")
     expect(schema).toContain('CREATE TABLE IF NOT EXISTS task_audit_logs')
-    expect(schema).toContain('CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_alias_platform')
-    expect(schema).toContain('CREATE INDEX IF NOT EXISTS idx_tasks_batch_action')
-    expect(schema).toContain('CREATE INDEX IF NOT EXISTS idx_tasks_confirmation')
-    expect(schema).toContain('CREATE INDEX IF NOT EXISTS idx_task_audit_logs_task')
     expect(schema).toMatch(/content_id INTEGER,\s+platform TEXT NOT NULL/s)
+  })
+
+  it('can execute target schema against a legacy database before guarded migrations run', () => {
+    const database = createLegacyDatabase()
+    const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf-8')
+
+    expect(() => database.exec(schema)).not.toThrow()
+    expect(() => runMigrations(database)).not.toThrow()
+    expect(columnExists(database, 'accounts', 'account_alias')).toBe(true)
+    expect(columnExists(database, 'tasks', 'action_type')).toBe(true)
+    expect(database.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_accounts_alias_platform'").get()).toBeTruthy()
+    expect(database.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_tasks_batch_action'").get()).toBeTruthy()
+    expect(database.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_tasks_confirmation'").get()).toBeTruthy()
+    expect(database.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_task_audit_logs_task'").get()).toBeTruthy()
+
+    database.close()
   })
 
   it('target schema supports inserting tasks with null content_id', () => {

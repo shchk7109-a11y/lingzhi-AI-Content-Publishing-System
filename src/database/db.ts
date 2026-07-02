@@ -144,6 +144,33 @@ function tableExists(database: Database.Database, tableName: string): boolean {
   return Boolean(row)
 }
 
+function columnsExist(database: Database.Database, tableName: string, columnNames: readonly string[]): boolean {
+  return columnNames.every((columnName) => columnExists(database, tableName, columnName))
+}
+
+function createIndexIfColumnsExist(
+  database: Database.Database,
+  indexName: string,
+  tableName: string,
+  columnNames: readonly string[],
+  unique: boolean = false
+): void {
+  assertSafeIdentifier(indexName)
+  assertSafeIdentifier(tableName)
+  for (const columnName of columnNames) {
+    assertSafeIdentifier(columnName)
+  }
+
+  if (!tableExists(database, tableName) || !columnsExist(database, tableName, columnNames)) {
+    return
+  }
+
+  const uniqueKeyword = unique ? 'UNIQUE ' : ''
+  database.exec(
+    `CREATE ${uniqueKeyword}INDEX IF NOT EXISTS ${indexName} ON ${tableName}(${columnNames.join(', ')});`
+  )
+}
+
 export function addColumnIfMissing(
   database: Database.Database,
   tableName: string,
@@ -158,19 +185,26 @@ export function addColumnIfMissing(
 }
 
 function createTaskIndexes(database: Database.Database): void {
-  database.exec(`
-    CREATE INDEX IF NOT EXISTS idx_tasks_status_scheduled ON tasks(status, scheduled_at);
-    CREATE INDEX IF NOT EXISTS idx_tasks_batch_action ON tasks(batch_id, action_type);
-    CREATE INDEX IF NOT EXISTS idx_tasks_confirmation ON tasks(require_manual_confirm, confirmed_at);
-  `)
+  createIndexIfColumnsExist(database, 'idx_tasks_status_scheduled', 'tasks', ['status', 'scheduled_at'])
+  createIndexIfColumnsExist(database, 'idx_tasks_batch_action', 'tasks', ['batch_id', 'action_type'])
+  createIndexIfColumnsExist(database, 'idx_tasks_confirmation', 'tasks', ['require_manual_confirm', 'confirmed_at'])
 }
 
 function createPublishLogIndexes(database: Database.Database): void {
-  database.exec('CREATE INDEX IF NOT EXISTS idx_publish_logs_task ON publish_logs(task_id);')
+  createIndexIfColumnsExist(database, 'idx_publish_logs_task', 'publish_logs', ['task_id'])
 }
 
 function createTaskAuditLogIndexes(database: Database.Database): void {
-  database.exec('CREATE INDEX IF NOT EXISTS idx_task_audit_logs_task ON task_audit_logs(task_id);')
+  createIndexIfColumnsExist(database, 'idx_task_audit_logs_task', 'task_audit_logs', ['task_id'])
+}
+
+function createOptionalIndexes(database: Database.Database): void {
+  createIndexIfColumnsExist(database, 'idx_match_records_account_date', 'match_records', ['account_id', 'matched_at'])
+  createIndexIfColumnsExist(database, 'idx_content_pool_status_tags', 'content_pool', ['status', 'gender', 'age_group', 'health_focus'])
+  createIndexIfColumnsExist(database, 'idx_proxy_pool_city_status', 'proxy_pool', ['city', 'status'])
+  createIndexIfColumnsExist(database, 'idx_accounts_customer', 'accounts', ['customer_id'])
+  createIndexIfColumnsExist(database, 'idx_content_pool_draft', 'content_pool', ['draft_id'])
+  createIndexIfColumnsExist(database, 'idx_accounts_alias_platform', 'accounts', ['account_alias', 'platform'], true)
 }
 
 function foreignKeysEnabled(database: Database.Database): boolean {
@@ -279,8 +313,8 @@ export function runMigrations(database: Database.Database): void {
       FOREIGN KEY (account_id) REFERENCES accounts(id)
     );
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_alias_platform ON accounts(account_alias, platform);
   `)
+  createOptionalIndexes(database)
   createTaskIndexes(database)
   createPublishLogIndexes(database)
   createTaskAuditLogIndexes(database)

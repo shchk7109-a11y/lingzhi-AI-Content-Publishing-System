@@ -147,15 +147,4 @@ CREATE TABLE IF NOT EXISTS match_rules (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- ===== 索引 =====
-CREATE INDEX IF NOT EXISTS idx_tasks_status_scheduled ON tasks(status, scheduled_at);
-CREATE INDEX IF NOT EXISTS idx_match_records_account_date ON match_records(account_id, matched_at);
-CREATE INDEX IF NOT EXISTS idx_publish_logs_task ON publish_logs(task_id);
-CREATE INDEX IF NOT EXISTS idx_content_pool_status_tags ON content_pool(status, gender, age_group, health_focus);
-CREATE INDEX IF NOT EXISTS idx_proxy_pool_city_status ON proxy_pool(city, status);
-CREATE INDEX IF NOT EXISTS idx_accounts_customer ON accounts(customer_id);
-CREATE INDEX IF NOT EXISTS idx_content_pool_draft ON content_pool(draft_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_alias_platform ON accounts(account_alias, platform);
-CREATE INDEX IF NOT EXISTS idx_tasks_batch_action ON tasks(batch_id, action_type);
-CREATE INDEX IF NOT EXISTS idx_tasks_confirmation ON tasks(require_manual_confirm, confirmed_at);
-CREATE INDEX IF NOT EXISTS idx_task_audit_logs_task ON task_audit_logs(task_id);
+-- Indexes are created by guarded migrations in db.ts after legacy columns are verified.
