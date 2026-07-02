@@ -13,6 +13,11 @@ let server: http.Server | null = null
  * 解决Electron渲染进程中图片预览和上传路径问题
  */
 export function startFileServer(): void {
+  if (server?.listening) {
+    console.log('[FileServer] Already running')
+    return
+  }
+
   const expressApp = express()
   const port = DEFAULT_SETTINGS.fileServerPort
 
@@ -44,7 +49,19 @@ export function startFileServer(): void {
     res.json({ status: 'ok', mediaDir, screenshotDir })
   })
 
-  server = expressApp.listen(port, '127.0.0.1', () => {
+  server = http.createServer(expressApp)
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE') {
+      console.warn(`[FileServer] Port ${port} is already in use; reusing existing local file server`)
+      server = null
+      return
+    }
+
+    console.error('[FileServer] Failed to start:', error)
+    server = null
+  })
+
+  server.listen(port, '127.0.0.1', () => {
     console.log(`[FileServer] Running at http://127.0.0.1:${port}`)
   })
 }
