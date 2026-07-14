@@ -3,9 +3,21 @@ import type { Task } from '../shared/types'
 
 const SUPPORTED_ACTION_TYPES = new Set(['publish', 'comment', 'favorite', 'collect', 'browse'])
 
+// 调度器只依赖这个最小接口，不直接依赖 puppeteer/发布器，保持模块边界
+export interface SchedulableExecutor {
+  execute(task: Task): Promise<void>
+}
+
+export interface TaskSchedulerOptions {
+  executor?: SchedulableExecutor
+  // 最大在途任务数（应与窗口池并发数对齐）
+  maxConcurrent?: number
+}
+
 /**
  * 任务调度器
- * 令牌桶 + 时间窗双重调度机制
+ * 令牌桶（控制发布频率）+ 时间窗（避免深夜）+ 在途并发上限三重调度机制。
+ * 注入 executor 后，tick 会真正驱动任务执行；未注入时退化为仅校验（向后兼容）。
  */
 export class TaskScheduler {
   private tokenBucket: number
@@ -14,12 +26,22 @@ export class TaskScheduler {
   private lastRefill: number
   private running: boolean = false
   private timer: NodeJS.Timeout | null = null
+  private readonly executor?: SchedulableExecutor
+  private maxConcurrent: number
+  // 在途任务ID，防止重复调度、控制并发
+  private readonly inFlight: Set<number> = new Set()
 
-  constructor(maxTokens: number = 3, refillRate: number = 0.05) {
+  constructor(maxTokens: number = 3, refillRate: number = 0.05, options?: TaskSchedulerOptions) {
     this.maxTokens = maxTokens
     this.tokenBucket = maxTokens
     this.refillRate = refillRate
     this.lastRefill = Date.now()
+    this.executor = options?.executor
+    this.maxConcurrent = Math.max(1, options?.maxConcurrent ?? maxTokens)
+  }
+
+  setMaxConcurrent(n: number): void {
+    this.maxConcurrent = Math.max(1, Math.floor(n))
   }
 
   /**
@@ -49,17 +71,62 @@ export class TaskScheduler {
   }
 
   /**
-   * 调度tick：检查并执行任务
+   * 调度tick：检查并执行任务（public 便于测试手动触发一次）
    */
-  private tick(): void {
-    // TODO: implement
-    // 1. refill令牌
-    // 2. 查询pending/queued任务
-    // 3. 按priority和scheduled_at排序
-    // 4. 消费令牌，分发任务执行
+  tick(): void {
+    if (!this.running) return
     this.refillTokens()
-    const tasks = this.getNextTasks(Math.floor(this.tokenBucket))
-    this.validateRunnableTasks(tasks)
+
+    // 未注入执行器：退化为仅校验（向后兼容，不真正执行）
+    if (!this.executor) {
+      this.validateRunnableTasks(this.getNextTasks(Math.floor(this.tokenBucket)))
+      return
+    }
+
+    // 时间窗保护：非允许时段不发起新任务
+    if (!this.isWithinPublishWindow()) return
+
+    // 可启动数 = min(可用令牌, 剩余并发额度)
+    const capacity = Math.min(Math.floor(this.tokenBucket), this.maxConcurrent - this.inFlight.size)
+    if (capacity <= 0) return
+
+    // 多取一些以便过滤掉仍在途（DB尚未标记running）的任务
+    const candidates = this.validateRunnableTasks(this.getNextTasks(capacity + this.inFlight.size))
+      .filter((task) => !this.inFlight.has(task.id))
+      .slice(0, capacity)
+
+    for (const task of candidates) {
+      if (!this.tryConsumeToken()) break
+      this.inFlight.add(task.id)
+      // fire-and-forget：executor.execute 内部自行处理所有回写与异常
+      void this.executor
+        .execute(task)
+        .catch((error) => {
+          console.error(`[TaskScheduler] Task ${task.id} execution error:`, error)
+        })
+        .finally(() => {
+          this.inFlight.delete(task.id)
+        })
+    }
+  }
+
+  /**
+   * 调度器状态
+   */
+  getStatus(): {
+    running: boolean
+    tokens: number
+    maxConcurrent: number
+    inFlight: number
+    hasExecutor: boolean
+  } {
+    return {
+      running: this.running,
+      tokens: Math.floor(this.tokenBucket),
+      maxConcurrent: this.maxConcurrent,
+      inFlight: this.inFlight.size,
+      hasExecutor: Boolean(this.executor)
+    }
   }
 
   /**

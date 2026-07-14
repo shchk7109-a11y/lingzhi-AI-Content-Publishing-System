@@ -124,4 +124,36 @@ describe('TaskScheduler', () => {
       error_log: 'Unsupported action_type: unsupported'
     })
   })
+
+  it('注入executor后，tick按容量分发任务并消费令牌', () => {
+    for (let i = 1; i <= 5; i++) {
+      state.database?.tasks.push({
+        id: i, status: 'queued', priority: 10, scheduled_at: null,
+        require_manual_confirm: 0, confirmed_at: null, action_type: 'publish'
+      })
+    }
+    const execute = vi.fn(async () => {})
+    // maxTokens=3, maxConcurrent=2 → 一次tick最多启动2个
+    const scheduler = new TaskScheduler(3, 0.05, { executor: { execute }, maxConcurrent: 2 })
+    vi.spyOn(scheduler, 'isWithinPublishWindow').mockReturnValue(true) // 避免依赖真实时间
+    scheduler.start()
+    scheduler.tick()
+    scheduler.stop()
+
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(scheduler.getStatus().tokens).toBe(1) // 3 - 2
+  })
+
+  it('未注入executor时tick不执行任务（向后兼容仅校验）', () => {
+    state.database?.tasks.push({
+      id: 1, status: 'queued', priority: 10, scheduled_at: null,
+      require_manual_confirm: 0, confirmed_at: null, action_type: 'publish'
+    })
+    const scheduler = new TaskScheduler(3, 0.05)
+    scheduler.start()
+    expect(() => scheduler.tick()).not.toThrow()
+    scheduler.stop()
+    // publish 是受支持动作，校验分支不会把它标记失败
+    expect(state.database?.tasks[0].status).toBe('queued')
+  })
 })
