@@ -3,9 +3,16 @@ productName: 灵芝水铺发布系统
 directories:
   buildResources: resources
   output: dist
+# 注意：不要写 "!node_modules/**/*"，否则会把 better-sqlite3 等原生依赖排除出安装包，
+# 导致应用启动时找不到数据库模块而崩溃。electron-builder 会自动打包生产依赖。
 files:
   - out/**/*
-  - "!node_modules/**/*"
+  - package.json
+asar: true
+# 原生模块（.node）必须解包到 asar 外，否则运行时无法加载
+asarUnpack:
+  - "**/*.node"
+  - "node_modules/better-sqlite3/**"
 win:
   target:
     - target: nsis
