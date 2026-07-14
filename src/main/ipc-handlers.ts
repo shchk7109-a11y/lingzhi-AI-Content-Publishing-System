@@ -20,7 +20,7 @@ const matchRecordDao = new MatchRecordDao()
 const taskDao = new TaskDao()
 const matchRuleDao = new MatchRuleDao()
 const bitManager = new BitBrowserManager()
-const windowPool = new WindowPool(bitManager, 1)
+const windowPool = new WindowPool(bitManager, DEFAULT_SETTINGS.maxConcurrency)
 const accountAliasService = new AccountAliasService()
 const taskPackageReader = new TaskPackageReader()
 const taskPackageImporter = new TaskPackageImporter()
@@ -282,6 +282,11 @@ export function registerIpcHandlers(): void {
       bitManager.updatePort(value)
     }
 
+    // 并发数联动
+    if (key === 'maxConcurrency' && typeof value === 'number') {
+      windowPool.setMaxConcurrency(value)
+    }
+
     // 代理网关配置联动
     if (key === 'proxyGateway' && value && typeof value === 'object') {
       proxyManager.setGateway(value as Parameters<ProxyManager['setGateway']>[0])
@@ -295,6 +300,10 @@ export function registerIpcHandlers(): void {
 
     if (settings.bitApiPort && typeof settings.bitApiPort === 'number') {
       bitManager.updatePort(settings.bitApiPort)
+    }
+
+    if (typeof settings.maxConcurrency === 'number') {
+      windowPool.setMaxConcurrency(settings.maxConcurrency)
     }
 
     if (settings.proxyGateway && typeof settings.proxyGateway === 'object') {

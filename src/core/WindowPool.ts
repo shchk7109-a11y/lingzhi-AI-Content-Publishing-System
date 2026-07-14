@@ -15,7 +15,8 @@ interface WindowSlot {
   status: 'active' | 'releasing'
 }
 
-type WaitResolver = (slot: WindowSlot | null) => void
+// 唤醒回调：granted=true 表示有空位可重新申请，false 表示池关闭应放弃
+type WaitResolver = (granted: boolean) => void
 
 /**
  * 并发窗口池
@@ -27,12 +28,33 @@ export class WindowPool {
   private bitManager: BitBrowserManager
   private waitQueue: WaitResolver[] = []
   private lastAcquireTime = 0
-  private readonly minIntervalMs = 30000 // 窗口间最小间隔30秒
+  private readonly minIntervalMs: number // 窗口间最小间隔，默认30秒
   private readonly staleTimeoutMs = 600000 // 10分钟超时
+  private readonly acquireTimeoutMs: number // 排队等待超时，默认5分钟
 
-  constructor(bitManager: BitBrowserManager, maxConcurrency: number = 1) {
+  constructor(
+    bitManager: BitBrowserManager,
+    maxConcurrency: number = 1,
+    options?: { minIntervalMs?: number; acquireTimeoutMs?: number }
+  ) {
     this.bitManager = bitManager
-    this.maxConcurrency = maxConcurrency
+    this.maxConcurrency = Math.max(1, maxConcurrency)
+    this.minIntervalMs = options?.minIntervalMs ?? 30000
+    this.acquireTimeoutMs = options?.acquireTimeoutMs ?? 300000
+  }
+
+  /**
+   * 动态调整最大并发数（Settings联动）
+   * 缩小时不强制关闭已活跃窗口，仅影响后续申请
+   */
+  setMaxConcurrency(n: number): void {
+    this.maxConcurrency = Math.max(1, Math.floor(n))
+    console.log(`[WindowPool] Max concurrency set to ${this.maxConcurrency}`)
+    // 若放宽了并发，唤醒等待者尝试获取
+    while (this.activeSlots.size < this.maxConcurrency && this.waitQueue.length > 0) {
+      const next = this.waitQueue.shift()
+      if (next) next(true)
+    }
   }
 
   /**
@@ -54,22 +76,16 @@ export class WindowPool {
     if (this.activeSlots.size >= this.maxConcurrency) {
       console.log(`[WindowPool] Max concurrency reached (${this.maxConcurrency}), queueing...`)
 
-      // 排队等待，超时5分钟
-      const slot = await Promise.race([
-        new Promise<WindowSlot | null>((resolve) => {
-          this.waitQueue.push(resolve)
-        }),
-        new Promise<null>((resolve) => {
-          setTimeout(() => resolve(null), 300000)
-        })
-      ])
-
-      if (!slot) {
+      // 排队等待空位；超时返回false
+      const gotSlot = await this.waitForSlot()
+      if (!gotSlot) {
         console.warn('[WindowPool] Acquire timed out after 5 minutes')
         return null
       }
 
-      return { browser: slot.browser, page: slot.page }
+      // 被唤醒（有空位了）→ 重新完整申请，为自己的 profileId 创建窗口
+      // 注意：不能复用别人的窗口，每个 profileId 必须开自己的指纹浏览器
+      return this.acquire(profileId, options)
     }
 
     // 实际创建窗口
@@ -120,6 +136,39 @@ export class WindowPool {
   }
 
   /**
+   * 排队等待空位。
+   * @returns true=有空位可申请；false=超时
+   * 超时或被唤醒后都会把自己从等待队列移除，避免泄漏与"唤醒已超时者"。
+   */
+  private waitForSlot(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+
+      const resolver: WaitResolver = (granted: boolean) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        this.removeFromQueue(resolver)
+        resolve(granted)
+      }
+
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        this.removeFromQueue(resolver)
+        resolve(false)
+      }, this.acquireTimeoutMs)
+
+      this.waitQueue.push(resolver)
+    })
+  }
+
+  private removeFromQueue(resolver: WaitResolver): void {
+    const idx = this.waitQueue.indexOf(resolver)
+    if (idx >= 0) this.waitQueue.splice(idx, 1)
+  }
+
+  /**
    * 释放窗口
    */
   async release(profileId: string): Promise<void> {
@@ -150,11 +199,10 @@ export class WindowPool {
     this.activeSlots.delete(profileId)
     console.log(`[WindowPool] Released: ${profileId} (active: ${this.activeSlots.size}/${this.maxConcurrency})`)
 
-    // 通知等待队列中的下一个
+    // 通知等待队列中的下一个：有空位了，让其重新acquire
     if (this.waitQueue.length > 0) {
       const nextResolver = this.waitQueue.shift()!
-      // 不直接resolve旧slot，让等待者重新acquire
-      nextResolver(null)
+      nextResolver(true)
     }
   }
 
@@ -188,15 +236,15 @@ export class WindowPool {
   async releaseAll(): Promise<void> {
     console.log(`[WindowPool] Releasing all ${this.activeSlots.size} windows...`)
 
+    // 先拒绝所有等待者（池关闭，放弃），避免 release 过程中把它们唤醒去重试
+    while (this.waitQueue.length > 0) {
+      const resolver = this.waitQueue.shift()!
+      resolver(false)
+    }
+
     const profileIds = Array.from(this.activeSlots.keys())
     for (const id of profileIds) {
       await this.release(id)
-    }
-
-    // 拒绝所有等待中的请求
-    while (this.waitQueue.length > 0) {
-      const resolver = this.waitQueue.shift()!
-      resolver(null)
     }
   }
 
