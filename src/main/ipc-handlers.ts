@@ -1,10 +1,12 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { getDatabase } from '../database/db'
-import { ContentDao, AccountDao, MatchRecordDao, TaskDao, MatchRuleDao } from '../database/dao'
+import { ContentDao, AccountDao, MatchRecordDao, TaskDao, MatchRuleDao, PublishLogDao } from '../database/dao'
 import { BitBrowserManager } from '../core/BitBrowserManager'
 import { WindowPool } from '../core/WindowPool'
 import { ProxyManager } from '../core/ProxyManager'
 import type { StickyAccountLike } from '../core/ProxyManager'
+import { TaskExecutor } from '../core/TaskExecutor'
+import { TaskScheduler } from '../core/TaskScheduler'
 import { HumanBehaviorEngine } from '../core/HumanBehaviorEngine'
 import { AccountAliasService } from '../core/accounts/AccountAliasService'
 import { TaskPackageImporter } from '../core/task-package/TaskPackageImporter'
@@ -29,9 +31,32 @@ const taskPackageImporter = new TaskPackageImporter()
 let currentSettings: SystemSettings = { ...DEFAULT_SETTINGS } as SystemSettings
 
 const proxyManager = new ProxyManager(currentSettings.proxyGateway)
+const publishLogDao = new PublishLogDao()
+
+// 任务执行器：把一条任务完整跑通（派生代理→下发→开窗→校验→发布→回写）
+const taskExecutor = new TaskExecutor(
+  windowPool,
+  proxyManager,
+  { content: contentDao, account: accountDao, task: taskDao, publishLog: publishLogDao },
+  (taskId, update) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.webContents.send('scheduler:task-update', { taskId, ...update })
+    }
+  }
+)
+
+// 任务调度器：令牌桶 + 时间窗 + 并发上限，自动驱动执行器
+const taskScheduler = new TaskScheduler(3, 0.05, {
+  executor: taskExecutor,
+  maxConcurrent: DEFAULT_SETTINGS.maxConcurrency
+})
 
 export function getProxyManager(): ProxyManager {
   return proxyManager
+}
+
+export function getTaskScheduler(): TaskScheduler {
+  return taskScheduler
 }
 
 /**
@@ -285,6 +310,7 @@ export function registerIpcHandlers(): void {
     // 并发数联动
     if (key === 'maxConcurrency' && typeof value === 'number') {
       windowPool.setMaxConcurrency(value)
+      taskScheduler.setMaxConcurrent(value)
     }
 
     // 代理网关配置联动
@@ -304,6 +330,7 @@ export function registerIpcHandlers(): void {
 
     if (typeof settings.maxConcurrency === 'number') {
       windowPool.setMaxConcurrency(settings.maxConcurrency)
+      taskScheduler.setMaxConcurrent(settings.maxConcurrency)
     }
 
     if (settings.proxyGateway && typeof settings.proxyGateway === 'object') {
@@ -447,6 +474,21 @@ export function registerIpcHandlers(): void {
   // ===== 窗口池状态 =====
   ipcMain.handle('windowPool:status', () => {
     return windowPool.getStatus()
+  })
+
+  // ===== 任务调度器 =====
+  ipcMain.handle('scheduler:start', () => {
+    taskScheduler.start()
+    return taskScheduler.getStatus()
+  })
+
+  ipcMain.handle('scheduler:stop', () => {
+    taskScheduler.stop()
+    return taskScheduler.getStatus()
+  })
+
+  ipcMain.handle('scheduler:status', () => {
+    return taskScheduler.getStatus()
   })
 
   // ===== 代理（住宅粘性会话） =====

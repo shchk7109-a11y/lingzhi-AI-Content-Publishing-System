@@ -1,5 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+interface SchedulerStatus {
+  running: boolean
+  tokens: number
+  maxConcurrent: number
+  inFlight: number
+  hasExecutor: boolean
+}
+
 const api = {
   // 内容池
   content: {
@@ -127,6 +135,13 @@ const api = {
     status: () => ipcRenderer.invoke('windowPool:status')
   },
 
+  // 任务调度器
+  scheduler: {
+    start: () => ipcRenderer.invoke('scheduler:start') as Promise<SchedulerStatus>,
+    stop: () => ipcRenderer.invoke('scheduler:stop') as Promise<SchedulerStatus>,
+    status: () => ipcRenderer.invoke('scheduler:status') as Promise<SchedulerStatus>
+  },
+
   // 事件监听
   onTaskProgress: (callback: (data: unknown) => void) => {
     ipcRenderer.on('task:progress', (_event, data) => callback(data))
@@ -139,6 +154,12 @@ const api = {
   },
   removePublishStepListener: () => {
     ipcRenderer.removeAllListeners('publish:step-update')
+  },
+  onSchedulerTaskUpdate: (callback: (data: unknown) => void) => {
+    ipcRenderer.on('scheduler:task-update', (_event, data) => callback(data))
+  },
+  removeSchedulerTaskListener: () => {
+    ipcRenderer.removeAllListeners('scheduler:task-update')
   }
 }
 
