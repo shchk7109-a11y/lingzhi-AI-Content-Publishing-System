@@ -3,6 +3,8 @@ import { getDatabase } from '../database/db'
 import { ContentDao, AccountDao, MatchRecordDao, TaskDao, MatchRuleDao } from '../database/dao'
 import { BitBrowserManager } from '../core/BitBrowserManager'
 import { WindowPool } from '../core/WindowPool'
+import { ProxyManager } from '../core/ProxyManager'
+import type { StickyAccountLike } from '../core/ProxyManager'
 import { HumanBehaviorEngine } from '../core/HumanBehaviorEngine'
 import { AccountAliasService } from '../core/accounts/AccountAliasService'
 import { TaskPackageImporter } from '../core/task-package/TaskPackageImporter'
@@ -25,6 +27,36 @@ const taskPackageImporter = new TaskPackageImporter()
 
 // 内存中的设置（启动时用默认值，可通过settings:update修改）
 let currentSettings: SystemSettings = { ...DEFAULT_SETTINGS } as SystemSettings
+
+const proxyManager = new ProxyManager(currentSettings.proxyGateway)
+
+export function getProxyManager(): ProxyManager {
+  return proxyManager
+}
+
+/**
+ * 把数据库账号行转换为派生粘性代理所需的最小结构。
+ */
+function toStickyAccount(row: Record<string, unknown>): StickyAccountLike {
+  let proxyConfig: Record<string, unknown> | null = null
+  if (typeof row.proxy_config === 'string' && row.proxy_config.trim()) {
+    try {
+      proxyConfig = JSON.parse(row.proxy_config) as Record<string, unknown>
+    } catch {
+      proxyConfig = null
+    }
+  } else if (row.proxy_config && typeof row.proxy_config === 'object') {
+    proxyConfig = row.proxy_config as Record<string, unknown>
+  }
+
+  return {
+    id: Number(row.id),
+    bit_profile_id: (row.bit_profile_id as string) || null,
+    account_alias: (row.account_alias as string) || null,
+    region: (row.region as string) || null,
+    proxy_config: proxyConfig
+  }
+}
 
 export function getBitManager(): BitBrowserManager {
   return bitManager
@@ -250,6 +282,11 @@ export function registerIpcHandlers(): void {
       bitManager.updatePort(value)
     }
 
+    // 代理网关配置联动
+    if (key === 'proxyGateway' && value && typeof value === 'object') {
+      proxyManager.setGateway(value as Parameters<ProxyManager['setGateway']>[0])
+    }
+
     return { success: true }
   })
 
@@ -258,6 +295,10 @@ export function registerIpcHandlers(): void {
 
     if (settings.bitApiPort && typeof settings.bitApiPort === 'number') {
       bitManager.updatePort(settings.bitApiPort)
+    }
+
+    if (settings.proxyGateway && typeof settings.proxyGateway === 'object') {
+      proxyManager.setGateway(settings.proxyGateway as Parameters<ProxyManager['setGateway']>[0])
     }
 
     return { success: true }
@@ -290,6 +331,7 @@ export function registerIpcHandlers(): void {
   // ===== 发布测试 =====
   ipcMain.handle('publish:test', async (_event, params: {
     profileId: string
+    accountId?: number
     title: string
     content: string
     tags: string[]
@@ -302,17 +344,55 @@ export function registerIpcHandlers(): void {
       win?.webContents.send('publish:step-update', data)
     }
 
+    // 若指定账号：派生粘性代理，开窗前下发；账号处于熔断中则直接拒绝
+    let stickyProxy = null
+    let stickyAccount: StickyAccountLike | null = null
+    if (params.accountId) {
+      const row = accountDao.getById(params.accountId)
+      if (row) {
+        stickyAccount = toStickyAccount(row)
+        const accountKey = stickyAccount.bit_profile_id || `acc${stickyAccount.id}`
+        if (proxyManager.isAccountTripped(accountKey)) {
+          const errMsg = '该账号代理处于熔断冷却中，暂不发布'
+          sendStep({ step: 'proxy', status: 'failed', error: errMsg })
+          return { success: false, error: errMsg, screenshots: [], steps: [] }
+        }
+        stickyProxy = proxyManager.buildStickyProxy(stickyAccount)
+      }
+    }
+
     let acquired = false
     try {
       sendStep({ step: 'acquire', status: 'running' })
 
-      const slot = await windowPool.acquire(params.profileId)
+      const slot = await windowPool.acquire(params.profileId, { proxy: stickyProxy })
       if (!slot) {
         throw new Error('获取浏览器窗口超时')
       }
       acquired = true
 
       sendStep({ step: 'acquire', status: 'completed', duration: 0 })
+
+      // 出口IP校验：确认发帖浏览器走的是绑定的固定出口
+      if (stickyProxy && proxyManager.getGateway().ipCheckUrl) {
+        sendStep({ step: 'verify_ip', status: 'running' })
+        const ipResult = await proxyManager.verifyExitIp(slot.page, stickyAccount?.region || undefined)
+        if (!ipResult.ok) {
+          const accountKey = stickyAccount?.bit_profile_id || `acc${stickyAccount?.id}`
+          proxyManager.reportAccountFailure(accountKey)
+          throw new Error(`出口IP校验未通过: ${ipResult.error}`)
+        }
+        if (ipResult.cityMatched === false) {
+          console.warn(`[Publish] 出口城市(${ipResult.city})与账号region(${stickyAccount?.region})不一致`)
+        }
+        sendStep({
+          step: 'verify_ip',
+          status: 'completed',
+          duration: 0,
+          error: undefined
+        })
+        console.log(`[Publish] 出口IP: ${ipResult.ip} 城市: ${ipResult.city}`)
+      }
 
       const behavior = new HumanBehaviorEngine()
       const publisher = new XiaohongshuPublisher(slot.page, behavior)
@@ -331,6 +411,16 @@ export function registerIpcHandlers(): void {
 
       const result = await publisher.publish(publishContent, params.accountLevel)
 
+      // 回报账号级熔断计数
+      if (stickyAccount) {
+        const accountKey = stickyAccount.bit_profile_id || `acc${stickyAccount.id}`
+        if (result.success) {
+          proxyManager.reportAccountSuccess(accountKey)
+        } else {
+          proxyManager.reportAccountFailure(accountKey)
+        }
+      }
+
       return result
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error)
@@ -348,5 +438,76 @@ export function registerIpcHandlers(): void {
   // ===== 窗口池状态 =====
   ipcMain.handle('windowPool:status', () => {
     return windowPool.getStatus()
+  })
+
+  // ===== 代理（住宅粘性会话） =====
+
+  // 派生某账号的粘性代理预览（不联网，密码打码）
+  ipcMain.handle('proxy:preview', (_event, accountId: number) => {
+    const row = accountDao.getById(accountId)
+    if (!row) return { ok: false, error: '账号不存在' }
+
+    try {
+      const proxy = proxyManager.buildStickyProxy(toStickyAccount(row))
+      if (!proxy) return { ok: false, error: '未配置网关且账号无固定代理' }
+      return {
+        ok: true,
+        proxy: { ...proxy, password: proxy.password ? '******' : '' }
+      }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  // 端到端诊断：派生 → 下发Bit → 开窗 → 校验出口IP → 关窗
+  ipcMain.handle('proxy:checkAccount', async (_event, accountId: number) => {
+    const row = accountDao.getById(accountId)
+    if (!row) return { ok: false, error: '账号不存在' }
+
+    const account = toStickyAccount(row)
+    const profileId = account.bit_profile_id
+    if (!profileId) return { ok: false, error: '账号未绑定 Bit 指纹浏览器(bit_profile_id)' }
+
+    let proxy = null
+    try {
+      proxy = proxyManager.buildStickyProxy(account)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+    if (!proxy) return { ok: false, error: '未配置网关且账号无固定代理' }
+
+    let acquired = false
+    try {
+      const slot = await windowPool.acquire(profileId, { proxy })
+      if (!slot) return { ok: false, error: '获取浏览器窗口超时' }
+      acquired = true
+
+      const ipResult = await proxyManager.verifyExitIp(slot.page, account.region || undefined)
+      return {
+        ok: ipResult.ok,
+        sessionId: proxy.sessionId,
+        exitIp: ipResult.ip,
+        city: ipResult.city,
+        cityMatched: ipResult.cityMatched,
+        error: ipResult.error
+      }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    } finally {
+      if (acquired) {
+        try {
+          await windowPool.release(profileId)
+        } catch { /* ignore */ }
+      }
+    }
+  })
+
+  ipcMain.handle('proxy:poolStats', () => {
+    return proxyManager.getPoolStats()
+  })
+
+  ipcMain.handle('proxy:batchImport', (_event, proxies: Array<{ ip: string; port: number; protocol?: string; city?: string; provider?: string; type?: string }>) => {
+    const imported = proxyManager.batchImport(proxies)
+    return { success: true, imported }
   })
 }

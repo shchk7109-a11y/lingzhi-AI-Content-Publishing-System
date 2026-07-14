@@ -56,6 +56,62 @@ export interface ProxyConfig {
   password?: string
 }
 
+/**
+ * 住宅代理网关配置（粘性会话模式）
+ * 住宅代理不是一堆离散IP，而是"一个网关 host:port + 每账号一个稳定 session-id"。
+ * 同一 session-id 在 TTL 内出口IP固定 —— 这正是"一号一IP"防限流的基础。
+ */
+export interface ProxyGatewayConfig {
+  // 是否启用网关派生（关闭时回退到账号自带的 proxy_config）
+  enabled: boolean
+  host: string
+  port: number
+  protocol: 'http' | 'https' | 'socks5'
+  // 网关基础账号密码
+  username: string
+  password: string
+  /**
+   * username 拼接模板，用占位符适配不同住宅代理供应商。
+   * 支持占位符：
+   *   {USER} → 基础 username
+   *   {SID}  → 每账号稳定派生的 session-id
+   *   {TTL}  → 会话有效期（分钟，来自 sessionTtlMinutes）
+   *   {CITY} → 目标城市（来自账号 region，未配置则为空）
+   * 例：青果 '{USER}-session-{SID}-time-{TTL}'
+   *     BrightData 'brd-customer-xxx-zone-yyy-session-{SID}'
+   */
+  usernameTemplate: string
+  // 粘性会话有效期（分钟），供 {TTL} 占位符与派生缓存判断使用
+  sessionTtlMinutes: number
+  // 出口IP校验接口（在浏览器页面内请求，校验真实出口）。留空则跳过校验。
+  ipCheckUrl: string
+}
+
+/**
+ * 为某账号派生出的粘性代理（可直接下发到 Bit 指纹浏览器）
+ */
+export interface StickyProxy {
+  protocol: 'http' | 'https' | 'socks5'
+  host: string
+  port: number
+  username: string
+  password: string
+  // 本次派生使用的稳定 session-id（同一账号恒定）
+  sessionId: string
+}
+
+/**
+ * 出口IP校验结果
+ */
+export interface ExitIpCheckResult {
+  ok: boolean
+  ip?: string
+  city?: string
+  // 期望城市与实际城市是否一致（未提供期望城市时为 undefined）
+  cityMatched?: boolean
+  error?: string
+}
+
 // 匹配记录
 export interface MatchRecord {
   id: number
@@ -148,6 +204,8 @@ export interface SystemSettings {
   bitApiPort: number
   maxConcurrency: number
   defaultProxy: ProxyConfig | null
+  // 住宅代理网关（粘性会话）配置
+  proxyGateway: ProxyGatewayConfig
   warmupEnabled: boolean
   warmupDurationMs: number
   publishIntervalMs: number

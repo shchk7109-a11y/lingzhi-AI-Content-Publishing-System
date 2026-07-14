@@ -1,5 +1,11 @@
 import puppeteer, { Browser, Page } from 'puppeteer-core'
 import { BitBrowserManager } from './BitBrowserManager'
+import type { StickyProxy } from '../shared/types'
+
+export interface AcquireOptions {
+  // 开窗前把粘性代理下发到该 Bit profile（"一号一IP"下发链路）
+  proxy?: StickyProxy | null
+}
 
 interface WindowSlot {
   profileId: string
@@ -34,7 +40,7 @@ export class WindowPool {
    * - 活跃数 < maxConcurrency → 立即分配
    * - 否则排队等待，超时5分钟返回null
    */
-  async acquire(profileId: string): Promise<{ browser: Browser; page: Page } | null> {
+  async acquire(profileId: string, options?: AcquireOptions): Promise<{ browser: Browser; page: Page } | null> {
     // 等待最小间隔
     const now = Date.now()
     const timeSinceLastAcquire = now - this.lastAcquireTime
@@ -68,6 +74,18 @@ export class WindowPool {
 
     // 实际创建窗口
     try {
+      // 开窗前下发粘性代理，确保该账号走绑定的固定出口IP
+      if (options?.proxy) {
+        console.log(`[WindowPool] Applying sticky proxy for profile ${profileId} (session: ${options.proxy.sessionId})`)
+        await this.bitManager.updateProfileProxy(profileId, {
+          type: options.proxy.protocol,
+          host: options.proxy.host,
+          port: options.proxy.port,
+          username: options.proxy.username,
+          password: options.proxy.password
+        })
+      }
+
       console.log(`[WindowPool] Opening browser for profile ${profileId}...`)
       const { ws } = await this.bitManager.openBrowser(profileId)
 

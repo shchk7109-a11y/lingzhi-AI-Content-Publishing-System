@@ -89,9 +89,31 @@ const api = {
   // 发布测试
   publish: {
     test: (params: {
-      profileId: string; title: string; content: string
+      profileId: string; accountId?: number; title: string; content: string
       tags: string[]; imagePaths: string[]; accountLevel: string
     }) => ipcRenderer.invoke('publish:test', params)
+  },
+
+  // 代理（住宅粘性会话）
+  proxy: {
+    // 预览某账号派生的粘性代理（不联网，密码打码）
+    preview: (accountId: number) => ipcRenderer.invoke('proxy:preview', accountId) as Promise<{
+      ok: boolean
+      proxy?: { protocol: string; host: string; port: number; username: string; password: string; sessionId: string }
+      error?: string
+    }>,
+    // 端到端诊断：下发代理→开窗→校验出口IP
+    checkAccount: (accountId: number) => ipcRenderer.invoke('proxy:checkAccount', accountId) as Promise<{
+      ok: boolean
+      sessionId?: string
+      exitIp?: string
+      city?: string
+      cityMatched?: boolean
+      error?: string
+    }>,
+    poolStats: () => ipcRenderer.invoke('proxy:poolStats'),
+    batchImport: (proxies: Array<{ ip: string; port: number; protocol?: string; city?: string; provider?: string; type?: string }>) =>
+      ipcRenderer.invoke('proxy:batchImport', proxies)
   },
 
   // 文件对话框

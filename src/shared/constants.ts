@@ -1,9 +1,25 @@
+// 默认住宅代理网关配置（默认关闭，用户在设置页填写供应商信息后启用）
+export const DEFAULT_PROXY_GATEWAY = {
+  enabled: false,
+  host: '',
+  port: 0,
+  protocol: 'http' as const,
+  username: '',
+  password: '',
+  // 默认按青果/常见住宅代理格式，用户可按供应商文档调整
+  usernameTemplate: '{USER}-session-{SID}-time-{TTL}',
+  sessionTtlMinutes: 30,
+  // 国内可达的出口IP查询接口，返回JSON含IP与地区
+  ipCheckUrl: 'https://qifu-api.baidubce.com/ip/local/geo/v1/district'
+}
+
 // 默认系统设置
 export const DEFAULT_SETTINGS = {
   bitApiUrl: 'http://127.0.0.1',
   bitApiPort: 54345,
   maxConcurrency: 3,
   defaultProxy: null,
+  proxyGateway: DEFAULT_PROXY_GATEWAY,
   warmupEnabled: true,
   warmupDurationMs: 30000,
   publishIntervalMs: 60000,
