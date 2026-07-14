@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   Button, Space, Table, Tag, Typography, Tabs, Empty, Modal, Form, Input, Select, Radio, List, message
 } from 'antd'
 import {
-  CaretRightOutlined, ReloadOutlined, RedoOutlined, ExperimentOutlined,
+  CaretRightOutlined, PauseCircleOutlined, ReloadOutlined, RedoOutlined, ExperimentOutlined,
   CheckCircleFilled, CloseCircleFilled, LoadingOutlined, ClockCircleOutlined,
   PictureOutlined, FolderOpenOutlined
 } from '@ant-design/icons'
@@ -65,6 +65,9 @@ function TaskCenter(): JSX.Element {
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [loading, setLoading] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [schedulerRunning, setSchedulerRunning] = useState(false)
+  const [togglingScheduler, setTogglingScheduler] = useState(false)
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 测试发布Modal
   const [testModalOpen, setTestModalOpen] = useState(false)
@@ -76,10 +79,6 @@ function TaskCenter(): JSX.Element {
   )
   const [testForm] = Form.useForm()
 
-  useEffect(() => {
-    loadTasks()
-  }, [])
-
   const loadTasks = async (): Promise<void> => {
     setLoading(true)
     try {
@@ -87,6 +86,44 @@ function TaskCenter(): JSX.Element {
       setTasks(data as TaskRow[])
     } catch { /* API未就绪 */ }
     setLoading(false)
+  }
+
+  const loadSchedulerStatus = async (): Promise<void> => {
+    try {
+      const s = await window.api.scheduler.status()
+      setSchedulerRunning(s.running)
+    } catch { /* API未就绪 */ }
+  }
+
+  // 调度器执行任务时会推送进度，节流刷新任务列表
+  const scheduleRefresh = useCallback((): void => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current)
+    refreshTimer.current = setTimeout(() => { loadTasks() }, 800)
+  }, [])
+
+  useEffect(() => {
+    loadTasks()
+    loadSchedulerStatus()
+    window.api.onSchedulerTaskUpdate(() => scheduleRefresh())
+    return () => {
+      window.api.removeSchedulerTaskListener()
+      if (refreshTimer.current) clearTimeout(refreshTimer.current)
+    }
+  }, [scheduleRefresh])
+
+  const handleToggleScheduler = async (): Promise<void> => {
+    setTogglingScheduler(true)
+    try {
+      const s = schedulerRunning
+        ? await window.api.scheduler.stop()
+        : await window.api.scheduler.start()
+      setSchedulerRunning(s.running)
+      message.success(s.running ? '自动发布已启动，将按频率与时间窗自动执行已确认任务' : '自动发布已暂停')
+    } catch (error) {
+      message.error(`操作失败: ${(error as Error).message}`)
+    } finally {
+      setTogglingScheduler(false)
+    }
   }
 
   const handleRetry = async (taskId: number): Promise<void> => {
@@ -294,7 +331,15 @@ function TaskCenter(): JSX.Element {
           <Button icon={<ExperimentOutlined />} onClick={openTestModal} style={{ borderColor: '#D4A853', color: '#D4A853' }}>
             测试发布
           </Button>
-          <Button icon={<CaretRightOutlined />} type="primary">启动全部待执行</Button>
+          <Button
+            icon={schedulerRunning ? <PauseCircleOutlined /> : <CaretRightOutlined />}
+            type="primary"
+            danger={schedulerRunning}
+            loading={togglingScheduler}
+            onClick={handleToggleScheduler}
+          >
+            {schedulerRunning ? '暂停自动发布' : '启动自动发布'}
+          </Button>
           <Button icon={<ReloadOutlined />} onClick={loadTasks}>刷新</Button>
         </Space>
       </div>
