@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Col, Form, Input, InputNumber, Row, Switch, Select, Typography, message, Tag } from 'antd'
+import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Switch, Select, Typography, message, Tag } from 'antd'
 import { SaveOutlined, ApiOutlined, CheckCircleFilled, CloseCircleFilled } from '@ant-design/icons'
 
 const { Title } = Typography
@@ -117,18 +117,73 @@ function Settings(): JSX.Element {
           </Col>
 
           <Col span={12}>
-            <Card title="代理配置" size="small" style={{ marginBottom: 16 }}>
-              <Form.Item label="代理供应商">
-                <Select placeholder="选择代理供应商" options={[
-                  { value: 'custom', label: '自定义代理' },
-                  { value: 'luminati', label: 'Bright Data' },
-                  { value: 'smartproxy', label: 'SmartProxy' },
-                  { value: 'oxylabs', label: 'Oxylabs' }
-                ]} />
+            <Card
+              title="住宅代理网关（粘性会话）"
+              size="small"
+              style={{ marginBottom: 16 }}
+              extra={
+                <Form.Item name={['proxyGateway', 'enabled']} valuePropName="checked" noStyle>
+                  <Switch checkedChildren="启用" unCheckedChildren="停用" />
+                </Form.Item>
+              }
+            >
+              <Alert
+                type="info"
+                message="每个账号按稳定 session-id 派生固定出口IP，实现「一号一IP」防限流。启用后开窗前会自动下发代理并校验出口IP。"
+                style={{ marginBottom: 12, fontSize: 12 }}
+              />
+              <Row gutter={12}>
+                <Col span={16}>
+                  <Form.Item label="网关地址" name={['proxyGateway', 'host']}>
+                    <Input placeholder="例如：proxy.qg.net" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="端口" name={['proxyGateway', 'port']}>
+                    <InputNumber min={0} max={65535} style={{ width: '100%' }} placeholder="8000" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={12}>
+                <Col span={8}>
+                  <Form.Item label="协议" name={['proxyGateway', 'protocol']}>
+                    <Select options={[
+                      { value: 'http', label: 'HTTP' },
+                      { value: 'https', label: 'HTTPS' },
+                      { value: 'socks5', label: 'SOCKS5' }
+                    ]} />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="账号" name={['proxyGateway', 'username']}>
+                    <Input placeholder="供应商账号" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="密码" name={['proxyGateway', 'password']}>
+                    <Input.Password placeholder="供应商密码" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Form.Item
+                label="用户名模板"
+                name={['proxyGateway', 'usernameTemplate']}
+                tooltip="占位符：{USER}基础账号 {SID}账号会话ID {TTL}有效期分钟 {CITY}目标城市。按供应商文档调整。"
+              >
+                <Input placeholder="{USER}-session-{SID}-time-{TTL}" />
               </Form.Item>
-              <Form.Item label="API Key" name="proxyApiKey">
-                <Input.Password placeholder="输入代理服务API Key" />
-              </Form.Item>
+              <Row gutter={12}>
+                <Col span={8}>
+                  <Form.Item label="会话有效期(分钟)" name={['proxyGateway', 'sessionTtlMinutes']}>
+                    <InputNumber min={1} max={1440} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={16}>
+                  <Form.Item label="出口IP校验接口" name={['proxyGateway', 'ipCheckUrl']} tooltip="留空则跳过出口IP校验">
+                    <Input placeholder="https://qifu-api.baidubce.com/ip/local/geo/v1/district" />
+                  </Form.Item>
+                </Col>
+              </Row>
             </Card>
 
             <Card title="系统设置" size="small" style={{ marginBottom: 16 }}>

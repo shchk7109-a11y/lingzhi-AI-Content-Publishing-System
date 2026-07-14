@@ -50,11 +50,61 @@ function AccountManager(): JSX.Element {
   const { accounts, loading, loadAccounts, searchText, setSearchText, createAccount } = useAccountStore()
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [testingId, setTestingId] = useState<number | null>(null)
   const [form] = Form.useForm()
 
   useEffect(() => {
     loadAccounts()
   }, [loadAccounts])
+
+  // 端到端测试该账号的粘性代理：下发代理→开窗→校验出口IP
+  const handleTestProxy = async (record: Account): Promise<void> => {
+    if (!record.bit_profile_id) {
+      message.warning('该账号未绑定 Bit Profile ID，无法测试代理')
+      return
+    }
+    setTestingId(record.id)
+    try {
+      const r = await window.api.proxy.checkAccount(record.id)
+      if (r.ok) {
+        Modal.success({
+          title: '出口IP校验通过',
+          content: (
+            <div style={{ lineHeight: 2 }}>
+              <div>出口IP：<b>{r.exitIp || '-'}</b></div>
+              <div>出口城市：<b>{r.city || '-'}</b>{record.region ? `（账号地区：${record.region}）` : ''}</div>
+              {r.cityMatched === false && (
+                <div style={{ color: '#faad14' }}>⚠ 出口城市与账号地区不一致，建议核对代理配置</div>
+              )}
+              <div style={{ color: '#999', fontSize: 12 }}>会话ID：{r.sessionId}</div>
+            </div>
+          )
+        })
+      } else {
+        Modal.error({ title: '代理测试未通过', content: r.error || '未知错误' })
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '代理测试失败')
+    } finally {
+      setTestingId(null)
+    }
+  }
+
+  const actionColumn = {
+    title: '操作',
+    key: 'action',
+    width: 110,
+    render: (_: unknown, record: Account) => (
+      <Button
+        size="small"
+        loading={testingId === record.id}
+        disabled={testingId !== null && testingId !== record.id}
+        onClick={() => handleTestProxy(record)}
+      >
+        测试代理
+      </Button>
+    )
+  }
 
   const handleOpenAddModal = (): void => {
     form.resetFields()
@@ -195,7 +245,7 @@ function AccountManager(): JSX.Element {
       </Space>
 
       <Table<Account>
-        columns={columns}
+        columns={[...columns, actionColumn]}
         dataSource={accounts}
         rowKey="id"
         loading={loading}
